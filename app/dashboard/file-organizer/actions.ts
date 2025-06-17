@@ -1,0 +1,298 @@
+'use server'
+
+import { createClient } from '@/utils/supabase/server'
+import { revalidatePath } from 'next/cache'
+import { Database, Tables, TablesInsert } from '@/utils/supabase/database.types'
+
+type Node = Tables<'nodes'>
+type Workspace = Tables<'workspaces'>
+
+export async function getUserWorkspaces() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { data, error } = await supabase
+    .from('workspaces')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    console.error('Error fetching workspaces:', error)
+    return [] as Workspace[]
+  }
+  
+  return (data || []) as Workspace[]
+}
+
+export async function createWorkspace(name: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { data, error } = await supabase
+    .from('workspaces')
+    .insert({
+      user_id: user.id,
+      name,
+      is_default: false
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+  return data as Workspace
+}
+
+export async function updateWorkspace(id: string, name: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { data, error } = await supabase
+    .from('workspaces')
+    .update({ name })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single()
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+  return data as Workspace
+}
+
+export async function getWorkspaceNodes(workspaceId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { data, error } = await supabase
+    .from('nodes')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', user.id)
+    .order('node_type', { ascending: true })
+    .order('name', { ascending: true })
+
+  if (error) throw error
+  return data as Node[]
+}
+
+export async function createFolder(workspaceId: string, parentId: string | null, name: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { data, error } = await supabase
+    .from('nodes')
+    .insert({
+      user_id: user.id,
+      workspace_id: workspaceId,
+      parent_id: parentId,
+      node_type: 'folder',
+      name
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+  return data as Node
+}
+
+export async function uploadFile(
+  workspaceId: string,
+  parentId: string | null,
+  file: File,
+  path?: string[]
+) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  // If path is provided, we need to create the folder structure
+  let currentParentId = parentId
+  
+  if (path && path.length > 0) {
+    for (const folderName of path) {
+      // Check if folder already exists
+      let query = supabase
+        .from('nodes')
+        .select('id')
+        .eq('workspace_id', workspaceId)
+        .eq('name', folderName)
+        .eq('node_type', 'folder')
+        .eq('user_id', user.id)
+      
+      // Handle NULL parent_id properly
+      if (currentParentId === null) {
+        query = query.is('parent_id', null)
+      } else {
+        query = query.eq('parent_id', currentParentId)
+      }
+      
+      const { data: existingFolder } = await query.single()
+
+      if (existingFolder) {
+        currentParentId = existingFolder.id
+      } else {
+        // Create the folder with proper null handling
+        try {
+          const { data: newFolder, error } = await supabase
+            .from('nodes')
+            .insert({
+              user_id: user.id,
+              workspace_id: workspaceId,
+              parent_id: currentParentId,
+              node_type: 'folder',
+              name: folderName
+            })
+            .select()
+            .single()
+          
+          if (error) {
+            // If it's a duplicate, try to fetch the existing folder
+            if (error.code === '23505') {
+              let recoveryQuery = supabase
+                .from('nodes')
+                .select('id')
+                .eq('workspace_id', workspaceId)
+                .eq('name', folderName)
+                .eq('node_type', 'folder')
+                .eq('user_id', user.id)
+              
+              // Handle NULL parent_id properly
+              if (currentParentId === null) {
+                recoveryQuery = recoveryQuery.is('parent_id', null)
+              } else {
+                recoveryQuery = recoveryQuery.eq('parent_id', currentParentId)
+              }
+              
+              const { data: existingAfterError } = await recoveryQuery.single()
+              
+              if (existingAfterError) {
+                currentParentId = existingAfterError.id
+              } else {
+                throw error
+              }
+            } else {
+              throw error
+            }
+          } else if (newFolder) {
+            currentParentId = newFolder.id
+          }
+        } catch (err) {
+          console.error('Error creating folder:', folderName, err)
+          throw err
+        }
+      }
+    }
+  }
+
+  // Generate unique storage path
+  const fileId = crypto.randomUUID()
+  const fileExt = file.name.split('.').pop()
+  const storagePath = `${user.id}/${fileId}.${fileExt}`
+
+  // Upload to Supabase Storage
+  const { error: uploadError } = await supabase.storage
+    .from('user-files')
+    .upload(storagePath, file)
+
+  if (uploadError) throw uploadError
+
+  // Check if file already exists with same name
+  let fileQuery = supabase
+    .from('nodes')
+    .select('id, name')
+    .eq('workspace_id', workspaceId)
+    .eq('node_type', 'file')
+    .eq('user_id', user.id)
+    .eq('name', file.name)
+  
+  // Handle NULL parent_id properly
+  if (currentParentId === null) {
+    fileQuery = fileQuery.is('parent_id', null)
+  } else {
+    fileQuery = fileQuery.eq('parent_id', currentParentId)
+  }
+  
+  const { data: existingFile } = await fileQuery.single()
+  
+  // If file exists, generate a unique name
+  let fileName = file.name
+  if (existingFile) {
+    const nameParts = file.name.split('.')
+    const extension = nameParts.pop()
+    const baseName = nameParts.join('.')
+    fileName = `${baseName}_${Date.now()}.${extension}`
+  }
+
+  // Create database record
+  const { data, error } = await supabase
+    .from('nodes')
+    .insert({
+      user_id: user.id,
+      workspace_id: workspaceId,
+      parent_id: currentParentId,
+      node_type: 'file',
+      name: fileName,
+      mime_type: file.type,
+      size: file.size,
+      storage_object_path: storagePath
+    })
+    .select()
+    .single()
+
+  if (error) {
+    // Clean up storage if database insert fails
+    await supabase.storage.from('user-files').remove([storagePath])
+    throw error
+  }
+
+  revalidatePath('/dashboard/file-organizer')
+  return data as Node
+}
+
+export async function deleteNode(nodeId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  // Get node details first
+  const { data: node } = await supabase
+    .from('nodes')
+    .select('*')
+    .eq('id', nodeId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!node) throw new Error('Node not found')
+
+  // If it's a file, delete from storage
+  if (node.node_type === 'file' && node.storage_object_path) {
+    await supabase.storage
+      .from('user-files')
+      .remove([node.storage_object_path])
+  }
+
+  // Delete from database (cascade will handle children)
+  const { error } = await supabase
+    .from('nodes')
+    .delete()
+    .eq('id', nodeId)
+    .eq('user_id', user.id)
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+}
