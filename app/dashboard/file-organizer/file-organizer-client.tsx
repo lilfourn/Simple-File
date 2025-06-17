@@ -51,10 +51,12 @@ export default function FileOrganizerClient({
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar - File Explorer */}
-        <div className="w-64 border-r bg-muted/10 overflow-y-auto">
+        <div className="w-64 border-r bg-muted/10 flex">
           <FileExplorer
             nodes={initialNodes}
             workspaceId={currentWorkspaceId}
+            workspace={workspaces.find(w => w.id === currentWorkspaceId)!}
+            workspaces={workspaces}
             onNodeSelect={setSelectedNode}
           />
         </div>

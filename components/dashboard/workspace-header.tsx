@@ -19,9 +19,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Plus, Edit2, Check, X } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Tables } from '@/utils/supabase/database.types'
-import { createWorkspace, updateWorkspace } from '@/app/dashboard/file-organizer/actions'
+import { createWorkspace } from '@/app/dashboard/file-organizer/actions'
 import { useRouter } from 'next/navigation'
 
 type Workspace = Tables<'workspaces'>
@@ -40,10 +40,6 @@ export default function WorkspaceHeader({
   const router = useRouter()
   const [isCreating, setIsCreating] = useState(false)
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingName, setEditingName] = useState('')
-
-  const currentWorkspace = workspaces.find(w => w.id === currentWorkspaceId)
 
   const handleCreateWorkspace = async () => {
     if (!newWorkspaceName.trim()) return
@@ -58,94 +54,27 @@ export default function WorkspaceHeader({
     }
   }
 
-  const handleUpdateWorkspace = async () => {
-    if (!editingId || !editingName.trim()) return
-
-    try {
-      await updateWorkspace(editingId, editingName.trim())
-      setEditingId(null)
-      setEditingName('')
-      router.refresh()
-    } catch (error) {
-      console.error('Failed to update workspace:', error)
-    }
-  }
-
-  const startEditing = () => {
-    if (currentWorkspace) {
-      setEditingId(currentWorkspace.id)
-      setEditingName(currentWorkspace.name)
-    }
-  }
-
-  const cancelEditing = () => {
-    setEditingId(null)
-    setEditingName('')
-  }
 
   return (
     <div className="border-b bg-background">
       <div className="px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            {editingId === currentWorkspaceId ? (
-              <div className="flex items-center gap-2">
-                <Input
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  className="h-8 w-48"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleUpdateWorkspace()
-                    if (e.key === 'Escape') cancelEditing()
-                  }}
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 w-8 p-0"
-                  onClick={handleUpdateWorkspace}
-                >
-                  <Check className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 w-8 p-0"
-                  onClick={cancelEditing}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Select value={currentWorkspaceId} onValueChange={onWorkspaceChange}>
-                  <SelectTrigger className="w-48 h-8">
-                    <SelectValue placeholder="Select workspace" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {workspaces.map((workspace) => (
-                      <SelectItem key={workspace.id} value={workspace.id}>
-                        {workspace.name}
-                        {workspace.is_default && (
-                          <span className="ml-2 text-xs text-muted-foreground">(default)</span>
-                        )}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                
-                {currentWorkspace && !currentWorkspace.is_default && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-8 p-0"
-                    onClick={startEditing}
-                  >
-                    <Edit2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            )}
+            <Select value={currentWorkspaceId} onValueChange={onWorkspaceChange}>
+              <SelectTrigger className="w-48 h-8">
+                <SelectValue placeholder="Select workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.map((workspace) => (
+                  <SelectItem key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                    {workspace.is_default && (
+                      <span className="ml-2 text-xs text-muted-foreground">(default)</span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <Dialog open={isCreating} onOpenChange={setIsCreating}>

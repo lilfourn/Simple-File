@@ -296,3 +296,49 @@ export async function deleteNode(nodeId: string) {
   if (error) throw error
   revalidatePath('/dashboard/file-organizer')
 }
+
+export async function deleteWorkspace(workspaceId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  // Check if workspace exists and belongs to user
+  const { data: workspace } = await supabase
+    .from('workspaces')
+    .select('*')
+    .eq('id', workspaceId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!workspace) throw new Error('Workspace not found')
+  if (workspace.is_default) throw new Error('Cannot delete default workspace')
+
+  // Get all files in this workspace to delete from storage
+  const { data: files } = await supabase
+    .from('nodes')
+    .select('storage_object_path')
+    .eq('workspace_id', workspaceId)
+    .eq('node_type', 'file')
+    .not('storage_object_path', 'is', null)
+
+  // Delete files from storage
+  if (files && files.length > 0) {
+    const filePaths = files.map(f => f.storage_object_path).filter(Boolean) as string[]
+    if (filePaths.length > 0) {
+      await supabase.storage
+        .from('user-files')
+        .remove(filePaths)
+    }
+  }
+
+  // Delete workspace (cascade will handle nodes)
+  const { error } = await supabase
+    .from('workspaces')
+    .delete()
+    .eq('id', workspaceId)
+    .eq('user_id', user.id)
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+}

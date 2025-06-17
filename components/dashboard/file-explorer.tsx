@@ -31,12 +31,15 @@ import { Tables } from '@/utils/supabase/database.types'
 import { createFolder, deleteNode } from '@/app/dashboard/file-organizer/actions'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import WorkspaceSettings from './workspace-settings'
 
 type Node = Tables<'nodes'>
 
 interface FileExplorerProps {
   nodes: Node[]
   workspaceId: string
+  workspace: Tables<'workspaces'>
+  workspaces: Tables<'workspaces'>[]
   onNodeSelect?: (node: Node) => void
 }
 
@@ -209,6 +212,20 @@ function TreeItem({
               }
             }}
           >
+            {node.node_type === 'folder' ? (
+              <Folder className="h-4 w-4 text-blue-600" />
+            ) : (
+              getFileIcon(node.mime_type, node.name)
+            )}
+            
+            <span className="text-sm flex-1 truncate">{node.name}</span>
+            
+            {node.node_type === 'file' && node.size && (
+              <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100">
+                {formatFileSize(node.size)}
+              </span>
+            )}
+            
             {node.node_type === 'folder' && (
               <button
                 className="p-0.5 hover:bg-accent rounded"
@@ -223,20 +240,6 @@ function TreeItem({
                   <ChevronRight className="h-3 w-3" />
                 )}
               </button>
-            )}
-            
-            {node.node_type === 'folder' ? (
-              <Folder className="h-4 w-4 text-blue-600" />
-            ) : (
-              getFileIcon(node.mime_type, node.name)
-            )}
-            
-            <span className="text-sm flex-1 truncate">{node.name}</span>
-            
-            {node.node_type === 'file' && node.size && (
-              <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100">
-                {formatFileSize(node.size)}
-              </span>
             )}
           </div>
         </ContextMenuTrigger>
@@ -303,7 +306,7 @@ function TreeItem({
   )
 }
 
-export default function FileExplorer({ nodes, workspaceId, onNodeSelect }: FileExplorerProps) {
+export default function FileExplorer({ nodes, workspaceId, workspace, workspaces, onNodeSelect }: FileExplorerProps) {
   const router = useRouter()
   const tree = buildTree(nodes)
   const [isCreatingRootFolder, setIsCreatingRootFolder] = useState(false)
@@ -327,55 +330,63 @@ export default function FileExplorer({ nodes, workspaceId, onNodeSelect }: FileE
   }
 
   return (
-    <div className="p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-medium">Files</h3>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setIsCreatingRootFolder(true)}
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-
-      {isCreatingRootFolder && (
-        <div className="flex items-center gap-2 px-2 py-1 mb-2">
-          <Folder className="h-4 w-4 text-blue-600" />
-          <Input
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateRootFolder()
-              if (e.key === 'Escape') {
-                setIsCreatingRootFolder(false)
-                setNewFolderName('')
-              }
-            }}
-            placeholder="Folder name"
-            className="h-6 text-sm"
-            autoFocus
-          />
+    <div className="flex flex-col h-full w-full">
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-medium">Files</h3>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setIsCreatingRootFolder(true)}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
         </div>
-      )}
 
-      {tree.length === 0 ? (
-        <p className="text-sm text-muted-foreground px-2">
-          No files yet. Upload files or create folders to get started.
-        </p>
-      ) : (
-        <div className="space-y-0.5">
-          {tree.map((node) => (
-            <TreeItem
-              key={node.id}
-              node={node}
-              workspaceId={workspaceId}
-              onNodeSelect={onNodeSelect}
-              onRefresh={handleRefresh}
+        {isCreatingRootFolder && (
+          <div className="flex items-center gap-2 px-2 py-1 mb-2">
+            <Folder className="h-4 w-4 text-blue-600" />
+            <Input
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateRootFolder()
+                if (e.key === 'Escape') {
+                  setIsCreatingRootFolder(false)
+                  setNewFolderName('')
+                }
+              }}
+              placeholder="Folder name"
+              className="h-6 text-sm"
+              autoFocus
             />
-          ))}
+          </div>
+        )}
+
+        {tree.length === 0 ? (
+          <p className="text-sm text-muted-foreground px-2">
+            No files yet. Upload files or create folders to get started.
+          </p>
+        ) : (
+          <div className="space-y-0.5">
+            {tree.map((node) => (
+              <TreeItem
+                key={node.id}
+                node={node}
+                workspaceId={workspaceId}
+                onNodeSelect={onNodeSelect}
+                onRefresh={handleRefresh}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      
+      <div className="border-t">
+        <div className="px-3 py-4">
+          <WorkspaceSettings workspace={workspace} workspaces={workspaces} />
         </div>
-      )}
+      </div>
     </div>
   )
 }
