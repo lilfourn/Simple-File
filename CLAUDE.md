@@ -63,3 +63,9 @@ npm run lint       # Run ESLint
 - The header component includes placeholder routes: /releases, /tutorials, /contact, /pricing
 - Path alias `@/*` is configured for imports from the root directory
 - Environment variables required: `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+### Development Guidelines
+- ALWAYS remove unused imports or files
+
+### Code Best Practices
+- ALWAYS right best practice typescript, react, tailwindcss code that is also secure
