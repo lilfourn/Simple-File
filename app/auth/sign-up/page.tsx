@@ -47,6 +47,7 @@ export default function SignUp() {
             </CardDescription>
           </CardHeader>
           <form action={handleSubmit}>
+            <input type="hidden" name="origin" value={typeof window !== 'undefined' ? window.location.origin : ''} />
             <CardContent className="space-y-4">
               {error && (
                 <Alert variant="destructive">
