@@ -177,6 +177,20 @@ function TreeItem({
       workspaceId: node.workspace_id,
       parentId: node.parent_id
     }))
+    
+    // Create custom drag image
+    const dragPreview = document.createElement('div')
+    dragPreview.className = 'flex items-center gap-2 px-3 py-2 bg-white rounded-lg shadow-lg'
+    dragPreview.innerHTML = `
+      <span>${node.node_type === 'folder' ? '📁' : '📄'}</span>
+      <span class="text-sm font-medium">${node.name}</span>
+    `
+    dragPreview.style.position = 'absolute'
+    dragPreview.style.top = '-1000px'
+    document.body.appendChild(dragPreview)
+    e.dataTransfer.setDragImage(dragPreview, 0, 0)
+    setTimeout(() => dragPreview.remove(), 0)
+    
     onDragStart(node)
   }
 
@@ -223,6 +237,13 @@ function TreeItem({
     }
     
     if (canAcceptDrop()) {
+      // Add drop animation class temporarily
+      const element = e.currentTarget as HTMLElement
+      element.style.animation = 'dropBounce 0.4s ease-out'
+      setTimeout(() => {
+        element.style.animation = ''
+      }, 400)
+      
       onDrop(node)
     }
   }
@@ -231,13 +252,21 @@ function TreeItem({
     if (!newFolderName.trim()) return
 
     try {
-      await createFolder(workspaceId, node.id, newFolderName.trim())
+      const result = await createFolder(workspaceId, node.id, newFolderName.trim())
+      
+      if (result.wasRenamed) {
+        toast.info(`Folder created as "${result.name}" to avoid naming conflict`)
+      } else {
+        toast.success(`Folder "${result.name}" created successfully`)
+      }
+      
       setNewFolderName('')
       setIsCreatingFolder(false)
       setIsExpanded(true)
       onRefresh()
     } catch (error) {
       console.error('Failed to create folder:', error)
+      toast.error('Failed to create folder')
     }
   }
 
@@ -289,9 +318,10 @@ function TreeItem({
             onDrop={node.node_type === 'folder' ? handleDrop : undefined}
             className={cn(
               "flex items-center gap-2 px-2 py-1 rounded hover:bg-accent cursor-pointer group",
-              "select-none transition-all",
-              isDragging && "opacity-50",
-              isDragOver && isValidDropTarget && "ring-2 ring-blue-500 bg-blue-50/50",
+              "select-none transition-all duration-200 ease-out",
+              "hover:scale-[1.01] active:scale-[0.99]",
+              isDragging && "opacity-50 scale-105 rotate-1",
+              isDragOver && isValidDropTarget && "ring-2 ring-blue-500 bg-blue-50/50 scale-[1.02]",
               isDragOver && !isValidDropTarget && "ring-2 ring-red-500 cursor-not-allowed"
             )}
             style={{ paddingLeft: `${level * 16 + 8}px` }}
@@ -312,24 +342,25 @@ function TreeItem({
             <span className="text-sm flex-1 truncate">{node.name}</span>
             
             {node.node_type === 'file' && node.size && (
-              <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100">
+              <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 {formatFileSize(node.size)}
               </span>
             )}
             
             {node.node_type === 'folder' && (
               <button
-                className="p-0.5 hover:bg-accent rounded"
+                className="p-0.5 hover:bg-accent rounded transition-all duration-200"
                 onClick={(e) => {
                   e.stopPropagation()
                   setIsExpanded(!isExpanded)
                 }}
               >
-                {isExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
+                <ChevronRight 
+                  className={cn(
+                    "h-3 w-3 transition-transform duration-200",
+                    isExpanded && "rotate-90"
+                  )} 
+                />
               </button>
             )}
           </div>
@@ -360,7 +391,10 @@ function TreeItem({
       </ContextMenu>
 
       {isCreatingFolder && (
-        <div className="flex items-center gap-2 px-2 py-1" style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}>
+        <div 
+          className="flex items-center gap-2 px-2 py-1 animate-in fade-in slide-in-from-left-2 duration-200" 
+          style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
+        >
           <Folder className="h-4 w-4 text-blue-600" />
           <Input
             value={newFolderName}
@@ -380,20 +414,28 @@ function TreeItem({
       )}
 
       {isExpanded && node.children.length > 0 && (
-        <div>
-          {node.children.map((child) => (
-            <TreeItem
+        <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+          {node.children.map((child, index) => (
+            <div
               key={child.id}
-              node={child}
-              level={level + 1}
-              workspaceId={workspaceId}
-              onNodeSelect={onNodeSelect}
-              onRefresh={onRefresh}
-              draggedNode={draggedNode}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-              onDrop={onDrop}
-            />
+              style={{ 
+                animationDelay: `${index * 20}ms`,
+                opacity: 0,
+                animation: `fadeIn 0.2s ease-out ${index * 20}ms forwards`
+              }}
+            >
+              <TreeItem
+                node={child}
+                level={level + 1}
+                workspaceId={workspaceId}
+                onNodeSelect={onNodeSelect}
+                onRefresh={onRefresh}
+                draggedNode={draggedNode}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onDrop={onDrop}
+              />
+            </div>
           ))}
         </div>
       )}
@@ -414,12 +456,20 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     if (!newFolderName.trim()) return
 
     try {
-      await createFolder(workspaceId, null, newFolderName.trim())
+      const result = await createFolder(workspaceId, null, newFolderName.trim())
+      
+      if (result.wasRenamed) {
+        toast.info(`Folder created as "${result.name}" to avoid naming conflict`)
+      } else {
+        toast.success(`Folder "${result.name}" created successfully`)
+      }
+      
       setNewFolderName('')
       setIsCreatingRootFolder(false)
       router.refresh()
     } catch (error) {
       console.error('Failed to create folder:', error)
+      toast.error('Failed to create folder')
     }
   }
 
@@ -446,8 +496,16 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     }
 
     setIsMoving(true)
+    
+    // Show optimistic feedback immediately
+    const targetName = targetNode?.name || 'root'
+    toast.loading(`Moving "${draggedNode.name}" to ${targetName}...`)
+    
     try {
       const result = await moveNode(draggedNode.id, targetNode?.id || null)
+      
+      // Dismiss loading toast
+      toast.dismiss()
       
       if (result.newName !== draggedNode.name) {
         toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`)
@@ -457,6 +515,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       
       router.refresh()
     } catch (error) {
+      toast.dismiss()
       console.error('Failed to move node:', error)
       toast.error(error instanceof Error ? error.message : "Failed to move item")
     } finally {
@@ -500,13 +559,14 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
             size="sm"
             variant="ghost"
             onClick={() => setIsCreatingRootFolder(true)}
+            className="transition-all duration-200 hover:scale-110 active:scale-95"
           >
             <Plus className="h-4 w-4" />
           </Button>
         </div>
 
         {isCreatingRootFolder && (
-          <div className="flex items-center gap-2 px-2 py-1 mb-2">
+          <div className="flex items-center gap-2 px-2 py-1 mb-2 animate-in fade-in slide-in-from-left-2 duration-200">
             <Folder className="h-4 w-4 text-blue-600" />
             <Input
               value={newFolderName}
@@ -554,13 +614,17 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
                 onDragLeave={handleRootDragLeave}
                 onDrop={handleRootDrop}
                 className={cn(
-                  "mt-2 p-4 border-2 border-dashed rounded-lg transition-all",
+                  "mt-2 p-4 border-2 border-dashed rounded-lg transition-all duration-300 ease-out",
+                  "animate-in fade-in slide-in-from-bottom-2",
                   isDraggingOverRoot
-                    ? "border-blue-500 bg-blue-50/50"
-                    : "border-gray-300"
+                    ? "border-blue-500 bg-blue-50/50 scale-[1.02] shadow-lg shadow-blue-500/20"
+                    : "border-gray-300 hover:border-gray-400"
                 )}
               >
-                <p className="text-sm text-muted-foreground text-center">
+                <p className={cn(
+                  "text-sm text-muted-foreground text-center transition-all duration-200",
+                  isDraggingOverRoot && "text-blue-700 font-medium"
+                )}>
                   Drop here to move to root
                 </p>
               </div>

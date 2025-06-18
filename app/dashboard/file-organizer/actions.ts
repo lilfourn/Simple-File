@@ -91,21 +91,55 @@ export async function createFolder(workspaceId: string, parentId: string | null,
   
   if (!user) throw new Error('Not authenticated')
 
-  const { data, error } = await supabase
-    .from('nodes')
-    .insert({
-      user_id: user.id,
-      workspace_id: workspaceId,
-      parent_id: parentId,
-      node_type: 'folder',
-      name
-    })
-    .select()
-    .single()
 
-  if (error) throw error
+  // Try to create with original name first
+  let folderName = name
+  let attempt = 0
+  let created = false
+  let finalData: Node | null = null
+
+  while (!created && attempt < 10) { // Max 10 attempts
+    try {
+      const { data, error } = await supabase
+        .from('nodes')
+        .insert({
+          user_id: user.id,
+          workspace_id: workspaceId,
+          parent_id: parentId,
+          node_type: 'folder',
+          name: folderName
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+      
+      created = true
+      finalData = data as Node
+    } catch (error: any) {
+      // Check if it's a duplicate key error
+      if (error?.code === '23505' && error?.message?.includes('idx_unique_node_in_root')) {
+        attempt++
+        // Generate a new name with number suffix
+        folderName = `${name} (${attempt + 1})`
+      } else {
+        // Re-throw other errors
+        throw error
+      }
+    }
+  }
+
+  if (!created || !finalData) {
+    throw new Error('Failed to create folder after multiple attempts')
+  }
+
   revalidatePath('/dashboard/file-organizer')
-  return data as Node
+  
+  // Return both the created folder and whether it was renamed
+  return {
+    ...finalData,
+    wasRenamed: finalData.name !== name
+  } as Node & { wasRenamed: boolean }
 }
 
 export async function uploadFile(
@@ -145,50 +179,14 @@ export async function uploadFile(
       if (existingFolder) {
         currentParentId = existingFolder.id
       } else {
-        // Create the folder with proper null handling
+        // Create the folder using our updated createFolder function
         try {
-          const { data: newFolder, error } = await supabase
-            .from('nodes')
-            .insert({
-              user_id: user.id,
-              workspace_id: workspaceId,
-              parent_id: currentParentId,
-              node_type: 'folder',
-              name: folderName
-            })
-            .select()
-            .single()
+          const result = await createFolder(workspaceId, currentParentId, folderName)
+          currentParentId = result.id
           
-          if (error) {
-            // If it's a duplicate, try to fetch the existing folder
-            if (error.code === '23505') {
-              let recoveryQuery = supabase
-                .from('nodes')
-                .select('id')
-                .eq('workspace_id', workspaceId)
-                .eq('name', folderName)
-                .eq('node_type', 'folder')
-                .eq('user_id', user.id)
-              
-              // Handle NULL parent_id properly
-              if (currentParentId === null) {
-                recoveryQuery = recoveryQuery.is('parent_id', null)
-              } else {
-                recoveryQuery = recoveryQuery.eq('parent_id', currentParentId)
-              }
-              
-              const { data: existingAfterError } = await recoveryQuery.single()
-              
-              if (existingAfterError) {
-                currentParentId = existingAfterError.id
-              } else {
-                throw error
-              }
-            } else {
-              throw error
-            }
-          } else if (newFolder) {
-            currentParentId = newFolder.id
+          // Log if folder was renamed during creation
+          if (result.wasRenamed) {
+            console.log(`Folder "${folderName}" was created as "${result.name}" to avoid conflict`)
           }
         } catch (err) {
           console.error('Error creating folder:', folderName, err)
