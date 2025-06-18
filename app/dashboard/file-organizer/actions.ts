@@ -295,6 +295,142 @@ export async function deleteNode(nodeId: string) {
   revalidatePath('/dashboard/file-organizer')
 }
 
+export async function deleteNodes(nodeIds: string[]) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+  if (nodeIds.length === 0) return
+
+  // Get all nodes to be deleted
+  const { data: nodes } = await supabase
+    .from('nodes')
+    .select('*')
+    .in('id', nodeIds)
+    .eq('user_id', user.id)
+
+  if (!nodes || nodes.length === 0) throw new Error('No nodes found')
+
+  // Collect storage paths for files
+  const storagePaths = nodes
+    .filter(node => node.node_type === 'file' && node.storage_object_path)
+    .map(node => node.storage_object_path!)
+
+  // Delete files from storage if any
+  if (storagePaths.length > 0) {
+    await supabase.storage
+      .from('user-files')
+      .remove(storagePaths)
+  }
+
+  // Delete all nodes from database (cascade will handle children)
+  const { error } = await supabase
+    .from('nodes')
+    .delete()
+    .in('id', nodeIds)
+    .eq('user_id', user.id)
+
+  if (error) throw error
+  revalidatePath('/dashboard/file-organizer')
+}
+
+export async function moveNodes(nodeIds: string[], newParentId: string | null) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+  if (nodeIds.length === 0) return
+
+  // Get all nodes to be moved
+  const { data: nodes } = await supabase
+    .from('nodes')
+    .select('*')
+    .in('id', nodeIds)
+    .eq('user_id', user.id)
+
+  if (!nodes || nodes.length === 0) throw new Error('No nodes found')
+
+  // Validate target if not root
+  if (newParentId) {
+    const { data: targetFolder } = await supabase
+      .from('nodes')
+      .select('*')
+      .eq('id', newParentId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (!targetFolder || targetFolder.node_type !== 'folder') {
+      throw new Error('Invalid target folder')
+    }
+
+    // Check workspace consistency
+    const differentWorkspace = nodes.some(node => node.workspace_id !== targetFolder.workspace_id)
+    if (differentWorkspace) {
+      throw new Error('Cannot move items between workspaces')
+    }
+
+    // Check for circular references for folders
+    for (const node of nodes.filter(n => n.node_type === 'folder')) {
+      const isCircular = await checkCircularReference(supabase, node.id, newParentId, user.id)
+      if (isCircular) {
+        throw new Error(`Cannot move folder "${node.name}" into itself or its descendants`)
+      }
+    }
+  }
+
+  // Move all nodes
+  const results = []
+  for (const node of nodes) {
+    // Check for duplicate names and rename if needed
+    let finalName = node.name
+    let query = supabase
+      .from('nodes')
+      .select('name')
+      .eq('workspace_id', node.workspace_id)
+      .eq('user_id', user.id)
+      .eq('node_type', node.node_type)
+      .neq('id', node.id) // Exclude the node being moved
+    
+    if (newParentId === null) {
+      query = query.is('parent_id', null)
+    } else {
+      query = query.eq('parent_id', newParentId)
+    }
+    
+    const { data: existingNodes } = await query
+
+    if (existingNodes) {
+      const existingNames = new Set(existingNodes.map(n => n.name))
+      if (existingNames.has(node.name)) {
+        let counter = 1
+        const baseName = node.name.replace(/ \(\d+\)$/, '')
+        while (existingNames.has(finalName)) {
+          finalName = `${baseName} (${counter})`
+          counter++
+        }
+      }
+    }
+
+    // Update the node
+    const { error } = await supabase
+      .from('nodes')
+      .update({ 
+        parent_id: newParentId,
+        name: finalName,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', node.id)
+      .eq('user_id', user.id)
+
+    if (error) throw error
+    
+    results.push({ id: node.id, newName: finalName, renamed: finalName !== node.name })
+  }
+
+  revalidatePath('/dashboard/file-organizer')
+  return results
+}
+
 export async function moveNode(nodeId: string, newParentId: string | null) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

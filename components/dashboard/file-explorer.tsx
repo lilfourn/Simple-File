@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -8,6 +8,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  ContextMenuSeparator,
 } from '@/components/ui/context-menu'
 import {
   Folder,
@@ -28,7 +29,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tables } from '@/utils/supabase/database.types'
-import { createFolder, deleteNode, moveNode } from '@/app/dashboard/file-organizer/actions'
+import { createFolder, deleteNode, deleteNodes, moveNode, moveNodes } from '@/app/dashboard/file-organizer/actions'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import WorkspaceSettings from './workspace-settings'
@@ -139,7 +140,9 @@ function TreeItem({
   draggedNode,
   onDragStart,
   onDragEnd,
-  onDrop
+  onDrop,
+  selectedNodes,
+  onNodeClick
 }: { 
   node: TreeNode
   level?: number
@@ -150,6 +153,8 @@ function TreeItem({
   onDragStart: (node: Node) => void
   onDragEnd: () => void
   onDrop: (targetNode: Node) => void
+  selectedNodes: Set<string>
+  onNodeClick: (node: Node, e: React.MouseEvent) => void
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
@@ -158,6 +163,9 @@ function TreeItem({
   const [expandTimer, setExpandTimer] = useState<NodeJS.Timeout | null>(null)
   const router = useRouter()
   const supabase = createClient()
+  
+  const isSelected = selectedNodes.has(node.id)
+  const selectedCount = selectedNodes.size
 
   // Check if this node can accept the dragged node
   const canAcceptDrop = useCallback(() => {
@@ -181,9 +189,13 @@ function TreeItem({
     // Create custom drag image
     const dragPreview = document.createElement('div')
     dragPreview.className = 'flex items-center gap-2 px-3 py-2 bg-white rounded-lg shadow-lg'
+    
+    const count = isSelected ? selectedCount : 1
+    const label = count > 1 ? `${count} items` : node.name
+    
     dragPreview.innerHTML = `
       <span>${node.node_type === 'folder' ? '📁' : '📄'}</span>
-      <span class="text-sm font-medium">${node.name}</span>
+      <span class="text-sm font-medium">${label}</span>
     `
     dragPreview.style.position = 'absolute'
     dragPreview.style.top = '-1000px'
@@ -310,6 +322,7 @@ function TreeItem({
       <ContextMenu>
         <ContextMenuTrigger>
           <div
+            data-tree-item
             draggable
             onDragStart={handleDragStart}
             onDragEnd={onDragEnd}
@@ -320,16 +333,16 @@ function TreeItem({
               "flex items-center gap-2 px-2 py-1 rounded hover:bg-accent cursor-pointer group",
               "select-none transition-all duration-200 ease-out",
               "hover:scale-[1.01] active:scale-[0.99]",
+              isSelected && "ring-1 ring-primary/30 bg-primary/5",
               isDragging && "opacity-50 scale-105 rotate-1",
               isDragOver && isValidDropTarget && "ring-2 ring-blue-500 bg-blue-50/50 scale-[1.02]",
               isDragOver && !isValidDropTarget && "ring-2 ring-red-500 cursor-not-allowed"
             )}
             style={{ paddingLeft: `${level * 16 + 8}px` }}
-            onClick={() => {
-              if (node.node_type === 'folder') {
+            onClick={(e) => {
+              onNodeClick(node, e)
+              if (!e.ctrlKey && !e.metaKey && !e.shiftKey && node.node_type === 'folder') {
                 setIsExpanded(!isExpanded)
-              } else {
-                onNodeSelect?.(node)
               }
             }}
           >
@@ -367,26 +380,47 @@ function TreeItem({
         </ContextMenuTrigger>
         
         <ContextMenuContent>
-          {node.node_type === 'folder' && (
+          {selectedCount > 1 ? (
+            // Multi-select context menu
             <>
-              <ContextMenuItem onClick={() => setIsCreatingFolder(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                New Folder
+              <ContextMenuItem disabled className="font-medium">
+                {selectedCount} items selected
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => onRefresh()} className="text-destructive">
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete {selectedCount} items
+              </ContextMenuItem>
+            </>
+          ) : (
+            // Single item context menu
+            <>
+              {node.node_type === 'folder' && (
+                <>
+                  <ContextMenuItem onClick={() => setIsCreatingFolder(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    New Folder
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                </>
+              )}
+              
+              {node.node_type === 'file' && (
+                <>
+                  <ContextMenuItem onClick={handleDownload}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                </>
+              )}
+              
+              <ContextMenuItem onClick={handleDelete} className="text-destructive">
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
               </ContextMenuItem>
             </>
           )}
-          
-          {node.node_type === 'file' && (
-            <ContextMenuItem onClick={handleDownload}>
-              <Download className="h-4 w-4 mr-2" />
-              Download
-            </ContextMenuItem>
-          )}
-          
-          <ContextMenuItem onClick={handleDelete} className="text-destructive">
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete
-          </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
 
@@ -434,6 +468,8 @@ function TreeItem({
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 onDrop={onDrop}
+                selectedNodes={selectedNodes}
+                onNodeClick={onNodeClick}
               />
             </div>
           ))}
@@ -451,6 +487,12 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
   const [draggedNode, setDraggedNode] = useState<Node | null>(null)
   const [isDraggingOverRoot, setIsDraggingOverRoot] = useState(false)
   const [isMoving, setIsMoving] = useState(false)
+  
+  // Multi-select state
+  const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set())
+  const [lastSelectedNode, setLastSelectedNode] = useState<string | null>(null)
+  const [isCtrlPressed, setIsCtrlPressed] = useState(false)
+  const [isShiftPressed, setIsShiftPressed] = useState(false)
 
   const handleCreateRootFolder = async () => {
     if (!newFolderName.trim()) return
@@ -478,7 +520,14 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
   }
 
   const handleDragStart = (node: Node) => {
-    setDraggedNode(node)
+    // If dragging a selected node, drag all selected
+    if (selectedNodes.has(node.id)) {
+      setDraggedNode(node) // Still track the original dragged node
+    } else {
+      // If dragging non-selected, clear selection and drag only this
+      setSelectedNodes(new Set([node.id]))
+      setDraggedNode(node)
+    }
   }
 
   const handleDragEnd = () => {
@@ -489,35 +538,54 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
   const handleDrop = async (targetNode: Node | null) => {
     if (!draggedNode || isMoving) return
     
-    // Don't move if dropping on same parent
-    if (draggedNode.parent_id === targetNode?.id || 
-        (draggedNode.parent_id === null && targetNode === null)) {
-      return
-    }
+    // Get all nodes to move (selected if dragging selected, otherwise just the dragged node)
+    const nodesToMove = selectedNodes.has(draggedNode.id) 
+      ? Array.from(selectedNodes)
+      : [draggedNode.id]
+    
+    // Check if any node is already in target
+    const nodesData = nodes.filter(n => nodesToMove.includes(n.id))
+    const allInTarget = nodesData.every(n => 
+      n.parent_id === targetNode?.id || (n.parent_id === null && targetNode === null)
+    )
+    
+    if (allInTarget) return
 
     setIsMoving(true)
     
-    // Show optimistic feedback immediately
+    // Show optimistic feedback
+    const count = nodesToMove.length
     const targetName = targetNode?.name || 'root'
-    toast.loading(`Moving "${draggedNode.name}" to ${targetName}...`)
+    toast.loading(`Moving ${count} item${count > 1 ? 's' : ''} to ${targetName}...`)
     
     try {
-      const result = await moveNode(draggedNode.id, targetNode?.id || null)
-      
-      // Dismiss loading toast
-      toast.dismiss()
-      
-      if (result.newName !== draggedNode.name) {
-        toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`)
+      if (count === 1) {
+        const result = await moveNode(draggedNode.id, targetNode?.id || null)
+        toast.dismiss()
+        
+        if (result.newName !== draggedNode.name) {
+          toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`)
+        } else {
+          toast.success(`Moved "${draggedNode.name}" successfully.`)
+        }
       } else {
-        toast.success(`Moved "${draggedNode.name}" successfully.`)
+        const results = await moveNodes(nodesToMove, targetNode?.id || null)
+        toast.dismiss()
+        
+        const renamedCount = results.filter(r => r.renamed).length
+        if (renamedCount > 0) {
+          toast.success(`Moved ${count} items successfully (${renamedCount} renamed to avoid conflicts)`)
+        } else {
+          toast.success(`Moved ${count} items successfully`)
+        }
       }
       
+      setSelectedNodes(new Set())
       router.refresh()
     } catch (error) {
       toast.dismiss()
-      console.error('Failed to move node:', error)
-      toast.error(error instanceof Error ? error.message : "Failed to move item")
+      console.error('Failed to move items:', error)
+      toast.error(error instanceof Error ? error.message : "Failed to move items")
     } finally {
       setIsMoving(false)
       setDraggedNode(null)
@@ -550,9 +618,129 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     }
   }
 
+  // Multi-select handlers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') {
+        setIsCtrlPressed(true)
+      }
+      if (e.key === 'Shift') {
+        setIsShiftPressed(true)
+      }
+      
+      // Select all
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault()
+        const allNodeIds = new Set(nodes.map(n => n.id))
+        setSelectedNodes(allNodeIds)
+      }
+      
+      // Clear selection
+      if (e.key === 'Escape') {
+        setSelectedNodes(new Set())
+      }
+      
+      // Delete selected
+      if (e.key === 'Delete' && selectedNodes.size > 0) {
+        e.preventDefault()
+        handleDeleteSelected()
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') {
+        setIsCtrlPressed(false)
+      }
+      if (e.key === 'Shift') {
+        setIsShiftPressed(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [selectedNodes, nodes])
+
+  const handleNodeClick = (node: Node, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      // Toggle selection
+      const newSelection = new Set(selectedNodes)
+      if (newSelection.has(node.id)) {
+        newSelection.delete(node.id)
+      } else {
+        newSelection.add(node.id)
+      }
+      setSelectedNodes(newSelection)
+      setLastSelectedNode(node.id)
+    } else if (e.shiftKey && lastSelectedNode) {
+      // Range selection
+      const allNodeIds = nodes.map(n => n.id)
+      const startIndex = allNodeIds.indexOf(lastSelectedNode)
+      const endIndex = allNodeIds.indexOf(node.id)
+      
+      if (startIndex !== -1 && endIndex !== -1) {
+        const range = allNodeIds.slice(
+          Math.min(startIndex, endIndex),
+          Math.max(startIndex, endIndex) + 1
+        )
+        setSelectedNodes(new Set([...selectedNodes, ...range]))
+      }
+    } else {
+      // Single selection
+      setSelectedNodes(new Set([node.id]))
+      setLastSelectedNode(node.id)
+      onNodeSelect?.(node)
+    }
+  }
+
+  const handleDeleteSelected = async () => {
+    if (selectedNodes.size === 0) return
+    
+    const count = selectedNodes.size
+    const message = count === 1 
+      ? 'Are you sure you want to delete this item?'
+      : `Are you sure you want to delete ${count} items?`
+    
+    if (!confirm(message)) return
+
+    toast.loading(`Deleting ${count} item${count > 1 ? 's' : ''}...`)
+    
+    try {
+      if (count === 1) {
+        await deleteNode(Array.from(selectedNodes)[0])
+      } else {
+        await deleteNodes(Array.from(selectedNodes))
+      }
+      
+      toast.dismiss()
+      toast.success(`Deleted ${count} item${count > 1 ? 's' : ''} successfully`)
+      setSelectedNodes(new Set())
+      router.refresh()
+    } catch (error) {
+      toast.dismiss()
+      console.error('Failed to delete items:', error)
+      toast.error('Failed to delete items')
+    }
+  }
+
   return (
     <div className="flex flex-col h-full w-full">
-      <div className="flex-1 overflow-y-auto px-3 py-4">
+      <div 
+        className="flex-1 overflow-y-auto px-3 py-4"
+        onClick={(e) => {
+          // Clear selection if clicking on empty space
+          if (e.target === e.currentTarget || e.currentTarget.contains(e.target as Node)) {
+            const isClickOnItem = (e.target as HTMLElement).closest('[data-tree-item]')
+            if (!isClickOnItem) {
+              setSelectedNodes(new Set())
+            }
+          }
+        }}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-medium">Files</h3>
           <Button
@@ -603,6 +791,8 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
                   onDrop={handleDrop}
+                  selectedNodes={selectedNodes}
+                  onNodeClick={handleNodeClick}
                 />
               ))}
             </div>
