@@ -33,7 +33,7 @@ import { createFolder, deleteNode, deleteNodes, moveNode, moveNodes } from '@/ap
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import WorkspaceSettings from './workspace-settings'
-import UploadPopover from './upload-popover'
+import UploadPopoverTus from './upload-popover-tus'
 import { toast } from 'sonner'
 import { ProgressToast } from '@/components/ui/progress-toast'
 import { SimpleToast } from '@/components/ui/simple-toast'
@@ -404,7 +404,7 @@ function TreeItem({
             <>
               {node.node_type === 'folder' && (
                 <>
-                  <UploadPopover
+                  <UploadPopoverTus
                     workspaceId={workspaceId}
                     parentId={node.id}
                     trigger={
@@ -810,7 +810,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-medium">Files</h3>
-          <UploadPopover
+          <UploadPopoverTus
             workspaceId={workspaceId}
             parentId={null}
             trigger={

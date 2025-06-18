@@ -63,7 +63,7 @@ export default function FileOrganizerClient({
             <div>
               <h1 className="text-2xl font-bold">File Organizer</h1>
               <p className="text-muted-foreground">
-                Upload and organize your files with AI-powered assistance
+                Organize your files with AI-powered assistance
               </p>
             </div>
 

@@ -28,9 +28,15 @@ export function ProgressToast({
           </span>
           {onCancel && (
             <button
-              onClick={onCancel}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                console.log('Cancel button clicked in ProgressToast')
+                onCancel()
+              }}
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 -m-1"
               aria-label="Cancel"
+              type="button"
             >
               <X className="h-3 w-3" />
             </button>
