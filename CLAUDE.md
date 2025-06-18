@@ -72,3 +72,9 @@ npm run lint       # Run ESLint
 
 ### Interaction Guidelines
 - Never start the server for us, if you want to restart the server just let me know and I will do it manually
+
+### Planning Guidelines
+- When in planning mode, always scan the codebase, list files, and check the current state of the codebase before creating a plan
+
+### Memory Guidance
+- ALWAYS use the internet to get recent information on implementing certain functionality if you are unsure how.

@@ -32,7 +32,17 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
-          <Toaster />
+          <Toaster 
+            toastOptions={{
+              style: {
+                width: '100%',
+                maxWidth: '600px',
+                whiteSpace: 'normal',
+                wordBreak: 'normal',
+                overflowWrap: 'break-word',
+              },
+            }}
+          />
         </ThemeProvider>
       </body>
     </html>

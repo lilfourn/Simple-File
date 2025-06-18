@@ -36,6 +36,7 @@ import WorkspaceSettings from './workspace-settings'
 import UploadPopover from './upload-popover'
 import { toast } from 'sonner'
 import { ProgressToast } from '@/components/ui/progress-toast'
+import { SimpleToast } from '@/components/ui/simple-toast'
 
 type Node = Tables<'nodes'>
 
@@ -271,7 +272,7 @@ function TreeItem({
     try {
       toast(
         <ProgressToast 
-          message={`Deleting ${node.name}...`}
+          message='Deleting file...'
           progress={50}
         />,
         { id: toastId, duration: Infinity }
@@ -279,11 +280,23 @@ function TreeItem({
       
       await deleteNode(node.id)
       
-      toast.success(`${node.name} deleted successfully`, { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message={`${node.name} deleted successfully`}
+          type="success"
+        />,
+        { id: toastId, duration: 4000 }
+      )
       onRefresh()
     } catch (error) {
       console.error('Failed to delete node:', error)
-      toast.error(`Failed to delete ${node.name}`, { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message={`Failed to delete ${node.name}`}
+          type="error"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     }
   }
 
@@ -518,7 +531,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       if (count === 1) {
         toast(
           <ProgressToast 
-            message={`Moving to ${targetName}...`}
+            message='Moving item...'
             progress={50}
           />,
           { id: toastId, duration: Infinity }
@@ -527,16 +540,27 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
         const result = await moveNode(draggedNode.id, targetNode?.id || null)
         
         if (result.newName !== draggedNode.name) {
-          toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`, { id: toastId, duration: 4000 })
+          toast(
+            <SimpleToast 
+              message={`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`}
+              type="success"
+            />,
+            { id: toastId, duration: 4000 }
+          )
         } else {
-          toast.success(`Moved "${draggedNode.name}" successfully.`, { id: toastId, duration: 4000 })
+          toast(
+            <SimpleToast 
+              message={`Moved "${draggedNode.name}" successfully.`}
+              type="success"
+            />,
+            { id: toastId, duration: 4000 }
+          )
         }
       } else {
         toast(
           <ProgressToast 
-            message={`Moving ${count} items to ${targetName}...`}
+            message='Moving items...'
             progress={50}
-            total={count}
           />,
           { id: toastId, duration: Infinity }
         )
@@ -545,9 +569,21 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
         
         const renamedCount = results.filter(r => r.renamed).length
         if (renamedCount > 0) {
-          toast.success(`Moved ${count} items successfully (${renamedCount} renamed to avoid conflicts)`, { id: toastId, duration: 4000 })
+          toast(
+            <SimpleToast 
+              message={`Moved ${count} items successfully (${renamedCount} renamed to avoid conflicts)`}
+              type="success"
+            />,
+            { id: toastId, duration: 4000 }
+          )
         } else {
-          toast.success(`Moved ${count} items successfully`, { id: toastId, duration: 4000 })
+          toast(
+            <SimpleToast 
+              message={`Moved ${count} items successfully`}
+              type="success"
+            />,
+            { id: toastId, duration: 4000 }
+          )
         }
       }
       
@@ -555,7 +591,13 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       router.refresh()
     } catch (error) {
       console.error('Failed to move items:', error)
-      toast.error(error instanceof Error ? error.message : "Failed to move items", { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message={error instanceof Error ? error.message : "Failed to move items"}
+          type="error"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     } finally {
       setIsMoving(false)
       setDraggedNode(null)
@@ -684,7 +726,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       if (count === 1) {
         toast(
           <ProgressToast 
-            message="Deleting item..."
+            message='Deleting item...'
             progress={50}
           />,
           { id: toastId, duration: Infinity }
@@ -692,14 +734,19 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
         
         await deleteNode(nodeArray[0])
         
-        toast.success('Item deleted successfully', { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message="Item deleted successfully"
+            type="success"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else {
         // For multiple items, show progress
         toast(
           <ProgressToast 
-            message={`Deleting ${count} items...`}
+            message='Deleting items...'
             progress={10}
-            total={count}
           />,
           { id: toastId, duration: Infinity }
         )
@@ -716,22 +763,33 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
           const progress = (deleted / count) * 100
           toast(
             <ProgressToast 
-              message={`Deleting items...`}
+              message='Deleting items...'
               progress={progress}
-              total={count}
             />,
             { id: toastId, duration: Infinity }
           )
         }
         
-        toast.success(`Deleted ${count} items successfully`, { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message={`Deleted ${count} items successfully`}
+            type="success"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       }
       
       setSelectedNodes(new Set())
       router.refresh()
     } catch (error) {
       console.error('Failed to delete items:', error)
-      toast.error('Failed to delete items', { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message="Failed to delete items"
+          type="error"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     }
   }
 

@@ -7,6 +7,7 @@ import { Upload, FolderUp, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { ProgressToast } from '@/components/ui/progress-toast'
+import { SimpleToast } from '@/components/ui/simple-toast'
 
 interface FileUploadProps {
   workspaceId: string
@@ -26,6 +27,8 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
   const [isDragging, setIsDragging] = useState(false)
   const [uploadQueue, setUploadQueue] = useState<FileUploadItem[]>([])
   const [isUploading, setIsUploading] = useState(false)
+  const [activeUploads, setActiveUploads] = useState<Map<string, XMLHttpRequest>>(new Map())
+  const [isCancelled, setIsCancelled] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
@@ -124,6 +127,11 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
   const uploadFileWithProgress = (item: FileUploadItem, index: number, total: number, toastId: string): Promise<boolean> => {
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest()
+      const uploadId = `${toastId}-${index}`
+      
+      // Store the XHR request for cancellation
+      setActiveUploads(prev => new Map(prev).set(uploadId, xhr))
+      
       const formData = new FormData()
       formData.append('file', item.file)
       formData.append('workspaceId', workspaceId)
@@ -148,9 +156,9 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
           // Update toast progress
           toast(
             <ProgressToast 
-              message={total > 1 ? `Uploading ${index + 1} of ${total} files...` : `Uploading ${item.file.name}...`}
+              message={total > 1 ? 'Uploading files...' : `Uploading ${item.file.name}...`}
               progress={overallProgress}
-              total={total > 1 ? total : undefined}
+              onCancel={() => handleCancelUpload(toastId)}
             />,
             { id: toastId, duration: Infinity }
           )
@@ -158,6 +166,13 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
       })
       
       xhr.addEventListener('load', () => {
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
         if (xhr.status >= 200 && xhr.status < 300) {
           setUploadQueue(prev => prev.map((q, idx) => 
             idx === uploadQueue.findIndex(uq => uq === item)
@@ -185,9 +200,32 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
       })
       
       xhr.addEventListener('error', () => {
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
         setUploadQueue(prev => prev.map((q, idx) => 
           idx === uploadQueue.findIndex(uq => uq === item)
             ? { ...q, status: 'error' as const, error: 'Network error' }
+            : q
+        ))
+        resolve(false)
+      })
+      
+      xhr.addEventListener('abort', () => {
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
+        setUploadQueue(prev => prev.map((q, idx) => 
+          idx === uploadQueue.findIndex(uq => uq === item)
+            ? { ...q, status: 'error' as const, error: 'Cancelled' }
             : q
         ))
         resolve(false)
@@ -200,26 +238,100 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
 
   const processUploadQueue = async (items: FileUploadItem[]) => {
     setIsUploading(true)
+    setIsCancelled(false)
     const toastId = `upload-batch-${Date.now()}`
     let successCount = 0
+    let cancelledCount = 0
 
     // Upload files sequentially to show accurate progress
     for (let i = 0; i < items.length; i++) {
+      // Check if cancelled before starting each upload
+      if (isCancelled) {
+        cancelledCount = items.length - i
+        // Mark remaining items as cancelled
+        for (let j = i; j < items.length; j++) {
+          setUploadQueue(prev => prev.map((q, idx) => 
+            idx === uploadQueue.findIndex(uq => uq === items[j])
+              ? { ...q, status: 'error' as const, error: 'Cancelled' }
+              : q
+          ))
+        }
+        break
+      }
+      
       const success = await uploadFileWithProgress(items[i], i, items.length, toastId)
       if (success) successCount++
     }
 
     // Show final result
-    if (successCount === items.length) {
-      toast.success(`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`, { id: toastId, duration: 4000 })
+    if (isCancelled && cancelledCount > 0) {
+      toast(
+        <SimpleToast 
+          message={`Uploaded ${successCount} of ${items.length} files (${cancelledCount} cancelled)`}
+          type="warning"
+        />,
+        { id: toastId, duration: 4000 }
+      )
+    } else if (successCount === items.length) {
+      toast(
+        <SimpleToast 
+          message={`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`}
+          type="success"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     } else if (successCount > 0) {
-      toast.warning(`Uploaded ${successCount} of ${items.length} files`, { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message={`Uploaded ${successCount} of ${items.length} files`}
+          type="warning"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     } else {
-      toast.error('Failed to upload files', { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message="Failed to upload files"
+          type="error"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     }
 
     setIsUploading(false)
+    setIsCancelled(false)
     onUploadComplete?.()
+  }
+
+  const handleCancelUpload = (toastId: string) => {
+    // Set cancelled flag to prevent new uploads from starting
+    setIsCancelled(true)
+    
+    // Cancel all active uploads for this toast
+    activeUploads.forEach((xhr, uploadId) => {
+      if (uploadId.startsWith(toastId)) {
+        xhr.abort()
+      }
+    })
+    
+    // Clear the toast
+    toast.dismiss(toastId)
+    toast(
+      <SimpleToast 
+        message="Upload cancelled"
+        type="info"
+      />,
+      { duration: 2000 }
+    )
+    
+    // Mark uploading items as cancelled
+    setUploadQueue(prev => prev.map(item => 
+      item.status === 'uploading' 
+        ? { ...item, status: 'error' as const, error: 'Cancelled' }
+        : item
+    ))
+    
+    setIsUploading(false)
   }
 
   const clearQueue = () => {

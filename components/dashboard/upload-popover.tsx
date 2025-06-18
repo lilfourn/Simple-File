@@ -13,6 +13,7 @@ import { createFolder } from '@/app/dashboard/file-organizer/actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import { ProgressToast } from '@/components/ui/progress-toast'
+import { SimpleToast } from '@/components/ui/simple-toast'
 
 interface UploadPopoverProps {
   workspaceId: string
@@ -33,6 +34,8 @@ export default function UploadPopover({
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [showUploadOptions, setShowUploadOptions] = useState(false)
+  const [activeUploads, setActiveUploads] = useState<Map<string, XMLHttpRequest>>(new Map())
+  const [isCancelled, setIsCancelled] = useState(false)
   const router = useRouter()
 
   const handleCreateFolder = async () => {
@@ -44,7 +47,7 @@ export default function UploadPopover({
     try {
       toast(
         <ProgressToast 
-          message={`Creating folder "${newFolderName.trim()}"...`}
+          message='Creating folder...'
           progress={50}
         />,
         { id: toastId, duration: Infinity }
@@ -53,9 +56,21 @@ export default function UploadPopover({
       const result = await createFolder(workspaceId, parentId, newFolderName.trim())
       
       if (result.wasRenamed) {
-        toast.info(`Folder created as "${result.name}" to avoid naming conflict`, { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message={`Folder created as "${result.name}" to avoid naming conflict`}
+            type="info"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else {
-        toast.success(`Folder "${result.name}" created successfully`, { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message={`Folder "${result.name}" created successfully`}
+            type="success"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       }
       
       setNewFolderName('')
@@ -64,7 +79,13 @@ export default function UploadPopover({
       router.refresh()
     } catch (error) {
       console.error('Failed to create folder:', error)
-      toast.error('Failed to create folder', { id: toastId, duration: 4000 })
+      toast(
+        <SimpleToast 
+          message="Failed to create folder"
+          type="error"
+        />,
+        { id: toastId, duration: 4000 }
+      )
     } finally {
       setIsCreatingFolder(false)
     }
@@ -73,6 +94,11 @@ export default function UploadPopover({
   const uploadFileWithProgress = (file: File, toastId: string | number, index: number, total: number, path?: string[]): Promise<boolean> => {
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest()
+      const uploadId = `${toastId}-${index}`
+      
+      // Store the XHR request for cancellation
+      setActiveUploads(prev => new Map(prev).set(uploadId, xhr))
+      
       const formData = new FormData()
       formData.append('file', file)
       formData.append('workspaceId', workspaceId)
@@ -89,9 +115,9 @@ export default function UploadPopover({
           
           toast(
             <ProgressToast 
-              message={total > 1 ? `Uploading ${index + 1} of ${total} files...` : `Uploading ${file.name}...`}
+              message={total > 1 ? 'Uploading files...' : `Uploading ${file.name}...`}
               progress={overallProgress}
-              total={total > 1 ? total : undefined}
+              onCancel={() => handleCancelUpload(toastId as string)}
             />,
             { id: toastId, duration: Infinity }
           )
@@ -99,21 +125,64 @@ export default function UploadPopover({
       })
       
       xhr.addEventListener('load', () => {
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(true)
         } else {
           try {
             const error = JSON.parse(xhr.responseText)
-            toast.error(`Failed to upload ${file.name}: ${error.error || 'Upload failed'}`)
+            toast(
+              <SimpleToast 
+                message={`Failed to upload ${file.name}: ${error.error || 'Upload failed'}`}
+                type="error"
+              />,
+              { duration: 4000 }
+            )
           } catch {
-            toast.error(`Failed to upload ${file.name}`)
+            toast(
+              <SimpleToast 
+                message={`Failed to upload ${file.name}`}
+                type="error"
+              />,
+              { duration: 4000 }
+            )
           }
           resolve(false)
         }
       })
       
       xhr.addEventListener('error', () => {
-        toast.error(`Failed to upload ${file.name}: Network error`)
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
+        toast(
+          <SimpleToast 
+            message={`Failed to upload ${file.name}: Network error`}
+            type="error"
+          />,
+          { duration: 4000 }
+        )
+        resolve(false)
+      })
+      
+      xhr.addEventListener('abort', () => {
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(uploadId)
+          return newMap
+        })
+        
         resolve(false)
       })
       
@@ -126,6 +195,9 @@ export default function UploadPopover({
     // Close popover immediately
     onOpenChange?.(false)
     
+    // Reset cancelled state
+    setIsCancelled(false)
+    
     // Create and trigger file input for individual files
     const input = document.createElement('input')
     input.type = 'file'
@@ -137,25 +209,61 @@ export default function UploadPopover({
       
       const toastId = `upload-${Date.now()}`
       let successCount = 0
+      let cancelledCount = 0
       
       // Upload files sequentially to show accurate progress
       for (let i = 0; i < files.length; i++) {
+        // Check if cancelled before starting each upload
+        if (isCancelled) {
+          cancelledCount = files.length - i
+          break
+        }
+        
         const success = await uploadFileWithProgress(files[i], toastId, i, files.length)
         if (success) successCount++
       }
       
       // Show final result
-      if (successCount === files.length) {
-        toast.success(`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`, { id: toastId, duration: 4000 })
+      if (isCancelled && cancelledCount > 0) {
+        toast(
+          <SimpleToast 
+            message={`Uploaded ${successCount} of ${files.length} files (${cancelledCount} cancelled)`}
+            type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
+      } else if (successCount === files.length) {
+        toast(
+          <SimpleToast 
+            message={`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`}
+            type="success"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else if (successCount > 0) {
-        toast.warning(`Uploaded ${successCount} of ${files.length} files`, { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message={`Uploaded ${successCount} of ${files.length} files`}
+            type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else {
-        toast.error('Failed to upload files', { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message="Failed to upload files"
+            type="error"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       }
       
       if (successCount > 0) {
         router.refresh()
       }
+      
+      // Reset state
+      setIsCancelled(false)
     }
     
     input.click()
@@ -164,6 +272,9 @@ export default function UploadPopover({
   const handleUploadFolder = () => {
     // Close popover immediately
     onOpenChange?.(false)
+    
+    // Reset cancelled state
+    setIsCancelled(false)
     
     // Create and trigger file input for directories
     const input = document.createElement('input')
@@ -177,9 +288,16 @@ export default function UploadPopover({
       
       const toastId = `upload-${Date.now()}`
       let successCount = 0
+      let cancelledCount = 0
       
       // Process files with folder structure
       for (let i = 0; i < files.length; i++) {
+        // Check if cancelled before starting each upload
+        if (isCancelled) {
+          cancelledCount = files.length - i
+          break
+        }
+        
         const file = files[i]
         // Extract folder path from webkitRelativePath
         const pathParts = (file as any).webkitRelativePath?.split('/') || []
@@ -194,20 +312,71 @@ export default function UploadPopover({
       }
       
       // Show final result
-      if (successCount === files.length) {
-        toast.success(`Successfully uploaded folder with ${successCount} file${successCount > 1 ? 's' : ''}!`, { id: toastId, duration: 4000 })
+      if (isCancelled && cancelledCount > 0) {
+        toast(
+          <SimpleToast 
+            message={`Uploaded ${successCount} of ${files.length} files (${cancelledCount} cancelled)`}
+            type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
+      } else if (successCount === files.length) {
+        toast(
+          <SimpleToast 
+            message={`Successfully uploaded folder with ${successCount} file${successCount > 1 ? 's' : ''}!`}
+            type="success"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else if (successCount > 0) {
-        toast.warning(`Uploaded ${successCount} of ${files.length} files from folder`, { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message={`Uploaded ${successCount} of ${files.length} files from folder`}
+            type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       } else {
-        toast.error('Failed to upload folder', { id: toastId, duration: 4000 })
+        toast(
+          <SimpleToast 
+            message="Failed to upload folder"
+            type="error"
+          />,
+          { id: toastId, duration: 4000 }
+        )
       }
       
       if (successCount > 0) {
         router.refresh()
       }
+      
+      // Reset state
+      setIsCancelled(false)
     }
     
     input.click()
+  }
+
+  const handleCancelUpload = (toastId: string) => {
+    // Set cancelled flag to prevent new uploads from starting
+    setIsCancelled(true)
+    
+    // Cancel all active uploads for this toast
+    activeUploads.forEach((xhr, uploadId) => {
+      if (uploadId.startsWith(toastId)) {
+        xhr.abort()
+      }
+    })
+    
+    // Clear the toast
+    toast.dismiss(toastId)
+    toast(
+      <SimpleToast 
+        message="Upload cancelled"
+        type="info"
+      />,
+      { duration: 2000 }
+    )
   }
 
   const resetState = () => {

@@ -1,29 +1,41 @@
 'use client'
 
 import { cn } from '@/lib/utils'
+import { X } from 'lucide-react'
 
 interface ProgressToastProps {
   message: string
   progress: number
-  total?: number
+  onCancel?: () => void
   className?: string
 }
 
 export function ProgressToast({ 
   message, 
-  progress, 
-  total,
+  progress,
+  onCancel,
   className 
 }: ProgressToastProps) {
   const percentage = Math.min(Math.max(progress, 0), 100)
   
   return (
     <div className={cn("w-full", className)}>
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-sm font-medium">{message}</p>
-        <span className="text-xs text-muted-foreground">
-          {total ? `${Math.floor(progress)} / ${total}` : `${Math.floor(percentage)}%`}
-        </span>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <p className="text-sm font-medium truncate flex-1">{message}</p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {Math.floor(percentage)}%
+          </span>
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Cancel"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="relative w-full h-2 bg-secondary rounded-full overflow-hidden">
         <div

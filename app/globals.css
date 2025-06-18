@@ -177,6 +177,33 @@
   animation: fadeIn 0.2s ease-out;
 }
 
+/* Sonner toast customizations */
+[data-sonner-toast] {
+  min-width: 300px !important;
+}
+
+[data-sonner-toast] > div:first-child {
+  width: 100% !important;
+  white-space: normal !important;
+  word-break: normal !important;
+}
+
+/* Target all text content within toasts */
+[data-sonner-toast] * {
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+/* Ensure text doesn't break at characters */
+[data-sonner-toast] p,
+[data-sonner-toast] span,
+[data-sonner-toast] div {
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+
 .folder-children {
   overflow: hidden;
   transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
