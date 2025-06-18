@@ -35,6 +35,7 @@ import { createClient } from '@/utils/supabase/client'
 import WorkspaceSettings from './workspace-settings'
 import UploadPopover from './upload-popover'
 import { toast } from 'sonner'
+import { ProgressToast } from '@/components/ui/progress-toast'
 
 type Node = Tables<'nodes'>
 
@@ -265,11 +266,24 @@ function TreeItem({
   const handleDelete = async () => {
     if (!confirm(`Are you sure you want to delete "${node.name}"?`)) return
 
+    const toastId = `delete-${node.id}`
+    
     try {
+      toast(
+        <ProgressToast 
+          message={`Deleting ${node.name}...`}
+          progress={50}
+        />,
+        { id: toastId, duration: Infinity }
+      )
+      
       await deleteNode(node.id)
+      
+      toast.success(`${node.name} deleted successfully`, { id: toastId, duration: 4000 })
       onRefresh()
     } catch (error) {
       console.error('Failed to delete node:', error)
+      toast.error(`Failed to delete ${node.name}`, { id: toastId, duration: 4000 })
     }
   }
 
@@ -498,36 +512,50 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     // Show optimistic feedback
     const count = nodesToMove.length
     const targetName = targetNode?.name || 'root'
-    toast.loading(`Moving ${count} item${count > 1 ? 's' : ''} to ${targetName}...`)
+    const toastId = `move-${Date.now()}`
     
     try {
       if (count === 1) {
+        toast(
+          <ProgressToast 
+            message={`Moving to ${targetName}...`}
+            progress={50}
+          />,
+          { id: toastId, duration: Infinity }
+        )
+        
         const result = await moveNode(draggedNode.id, targetNode?.id || null)
-        toast.dismiss()
         
         if (result.newName !== draggedNode.name) {
-          toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`)
+          toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`, { id: toastId, duration: 4000 })
         } else {
-          toast.success(`Moved "${draggedNode.name}" successfully.`)
+          toast.success(`Moved "${draggedNode.name}" successfully.`, { id: toastId, duration: 4000 })
         }
       } else {
+        toast(
+          <ProgressToast 
+            message={`Moving ${count} items to ${targetName}...`}
+            progress={50}
+            total={count}
+          />,
+          { id: toastId, duration: Infinity }
+        )
+        
         const results = await moveNodes(nodesToMove, targetNode?.id || null)
-        toast.dismiss()
         
         const renamedCount = results.filter(r => r.renamed).length
         if (renamedCount > 0) {
-          toast.success(`Moved ${count} items successfully (${renamedCount} renamed to avoid conflicts)`)
+          toast.success(`Moved ${count} items successfully (${renamedCount} renamed to avoid conflicts)`, { id: toastId, duration: 4000 })
         } else {
-          toast.success(`Moved ${count} items successfully`)
+          toast.success(`Moved ${count} items successfully`, { id: toastId, duration: 4000 })
         }
       }
       
       setSelectedNodes(new Set())
       router.refresh()
     } catch (error) {
-      toast.dismiss()
       console.error('Failed to move items:', error)
-      toast.error(error instanceof Error ? error.message : "Failed to move items")
+      toast.error(error instanceof Error ? error.message : "Failed to move items", { id: toastId, duration: 4000 })
     } finally {
       setIsMoving(false)
       setDraggedNode(null)
@@ -649,23 +677,61 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     
     if (!confirm(message)) return
 
-    toast.loading(`Deleting ${count} item${count > 1 ? 's' : ''}...`)
+    const toastId = `delete-${Date.now()}`
+    const nodeArray = Array.from(selectedNodes)
     
     try {
       if (count === 1) {
-        await deleteNode(Array.from(selectedNodes)[0])
+        toast(
+          <ProgressToast 
+            message="Deleting item..."
+            progress={50}
+          />,
+          { id: toastId, duration: Infinity }
+        )
+        
+        await deleteNode(nodeArray[0])
+        
+        toast.success('Item deleted successfully', { id: toastId, duration: 4000 })
       } else {
-        await deleteNodes(Array.from(selectedNodes))
+        // For multiple items, show progress
+        toast(
+          <ProgressToast 
+            message={`Deleting ${count} items...`}
+            progress={10}
+            total={count}
+          />,
+          { id: toastId, duration: Infinity }
+        )
+        
+        // Delete in batches for better performance
+        const batchSize = 5
+        let deleted = 0
+        
+        for (let i = 0; i < nodeArray.length; i += batchSize) {
+          const batch = nodeArray.slice(i, i + batchSize)
+          await deleteNodes(batch)
+          deleted += batch.length
+          
+          const progress = (deleted / count) * 100
+          toast(
+            <ProgressToast 
+              message={`Deleting items...`}
+              progress={progress}
+              total={count}
+            />,
+            { id: toastId, duration: Infinity }
+          )
+        }
+        
+        toast.success(`Deleted ${count} items successfully`, { id: toastId, duration: 4000 })
       }
       
-      toast.dismiss()
-      toast.success(`Deleted ${count} item${count > 1 ? 's' : ''} successfully`)
       setSelectedNodes(new Set())
       router.refresh()
     } catch (error) {
-      toast.dismiss()
       console.error('Failed to delete items:', error)
-      toast.error('Failed to delete items')
+      toast.error('Failed to delete items', { id: toastId, duration: 4000 })
     }
   }
 

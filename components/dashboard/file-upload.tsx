@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Upload, FolderUp, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+import { ProgressToast } from '@/components/ui/progress-toast'
 
 interface FileUploadProps {
   workspaceId: string
@@ -119,55 +121,101 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
     processUploadQueue(uploadItems)
   }
 
+  const uploadFileWithProgress = (item: FileUploadItem, index: number, total: number, toastId: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest()
+      const formData = new FormData()
+      formData.append('file', item.file)
+      formData.append('workspaceId', workspaceId)
+      formData.append('parentId', parentId || 'null')
+      if (item.path) {
+        formData.append('path', JSON.stringify(item.path))
+      }
+      
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const fileProgress = (e.loaded / e.total) * 100
+          const overallProgress = ((index + (fileProgress / 100)) / total) * 100
+          
+          // Update individual file progress
+          setUploadQueue(prev => prev.map((q, idx) => 
+            idx === uploadQueue.findIndex(uq => uq === item)
+              ? { ...q, progress: fileProgress }
+              : q
+          ))
+          
+          // Update toast progress
+          toast(
+            <ProgressToast 
+              message={total > 1 ? `Uploading ${index + 1} of ${total} files...` : `Uploading ${item.file.name}...`}
+              progress={overallProgress}
+              total={total > 1 ? total : undefined}
+            />,
+            { id: toastId, duration: Infinity }
+          )
+        }
+      })
+      
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setUploadQueue(prev => prev.map((q, idx) => 
+            idx === uploadQueue.findIndex(uq => uq === item)
+              ? { ...q, status: 'complete' as const, progress: 100 }
+              : q
+          ))
+          resolve(true)
+        } else {
+          try {
+            const error = JSON.parse(xhr.responseText)
+            setUploadQueue(prev => prev.map((q, idx) => 
+              idx === uploadQueue.findIndex(uq => uq === item)
+                ? { ...q, status: 'error' as const, error: error.error || 'Upload failed' }
+                : q
+            ))
+          } catch {
+            setUploadQueue(prev => prev.map((q, idx) => 
+              idx === uploadQueue.findIndex(uq => uq === item)
+                ? { ...q, status: 'error' as const, error: 'Upload failed' }
+                : q
+            ))
+          }
+          resolve(false)
+        }
+      })
+      
+      xhr.addEventListener('error', () => {
+        setUploadQueue(prev => prev.map((q, idx) => 
+          idx === uploadQueue.findIndex(uq => uq === item)
+            ? { ...q, status: 'error' as const, error: 'Network error' }
+            : q
+        ))
+        resolve(false)
+      })
+      
+      xhr.open('POST', '/api/upload')
+      xhr.send(formData)
+    })
+  }
+
   const processUploadQueue = async (items: FileUploadItem[]) => {
     setIsUploading(true)
-    const startIndex = uploadQueue.length
+    const toastId = `upload-batch-${Date.now()}`
+    let successCount = 0
 
+    // Upload files sequentially to show accurate progress
     for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      const currentIndex = startIndex + i
-      
-      // Update status to uploading
-      setUploadQueue(prev => prev.map((q, idx) => 
-        idx === currentIndex
-          ? { ...q, status: 'uploading' as const, progress: 50 }
-          : q
-      ))
+      const success = await uploadFileWithProgress(items[i], i, items.length, toastId)
+      if (success) successCount++
+    }
 
-      try {
-        const formData = new FormData()
-        formData.append('file', item.file)
-        formData.append('workspaceId', workspaceId)
-        formData.append('parentId', parentId || 'null')
-        if (item.path) {
-          formData.append('path', JSON.stringify(item.path))
-        }
-        
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
-        })
-        
-        if (!response.ok) {
-          const error = await response.json()
-          throw new Error(error.error || 'Upload failed')
-        }
-        
-        // Update status to complete
-        setUploadQueue(prev => prev.map((q, idx) => 
-          idx === currentIndex
-            ? { ...q, status: 'complete' as const, progress: 100 }
-            : q
-        ))
-      } catch (error) {
-        console.error('Upload error:', error)
-        // Update status to error
-        setUploadQueue(prev => prev.map((q, idx) => 
-          idx === currentIndex
-            ? { ...q, status: 'error' as const, error: error instanceof Error ? error.message : 'Upload failed' }
-            : q
-        ))
-      }
+    // Show final result
+    if (successCount === items.length) {
+      toast.success(`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`, { id: toastId, duration: 4000 })
+    } else if (successCount > 0) {
+      toast.warning(`Uploaded ${successCount} of ${items.length} files`, { id: toastId, duration: 4000 })
+    } else {
+      toast.error('Failed to upload files', { id: toastId, duration: 4000 })
     }
 
     setIsUploading(false)
