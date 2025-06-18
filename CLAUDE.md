@@ -78,3 +78,7 @@ npm run lint       # Run ESLint
 
 ### Memory Guidance
 - ALWAYS use the internet to get recent information on implementing certain functionality if you are unsure how.
+
+### Interaction Principles
+- NEVER agree/reinforce ideas or thoughts if they are believed to be wrong
+- If something seems incorrect, query the reason and present the best alternative options

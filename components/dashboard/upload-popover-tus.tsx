@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Popover,
   PopoverContent,
@@ -16,6 +16,9 @@ import { ProgressToast } from '@/components/ui/progress-toast'
 import { SimpleToast } from '@/components/ui/simple-toast'
 import * as tus from 'tus-js-client'
 import { createClient } from '@/utils/supabase/client'
+import { ParallelUploadManager, UploadTask } from '@/utils/parallel-upload-manager'
+import { FolderStructureProcessor } from '@/utils/folder-structure-processor'
+import { StorageSessionManager } from '@/utils/storage-session-manager'
 
 interface UploadPopoverProps {
   workspaceId: string
@@ -28,6 +31,40 @@ interface UploadPopoverProps {
 interface UploadItem {
   file: File
   path?: string[]
+}
+
+// Validate files before upload
+function validateFile(file: File): string | null {
+  // Skip system files and hidden files
+  if (file.name.startsWith('.')) {
+    return 'Hidden files are not allowed'
+  }
+  
+  // Skip files with UUID-only names (system files)
+  const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i
+  if (uuidPattern.test(file.name)) {
+    return 'System files are not allowed'
+  }
+  
+  // Skip empty files
+  if (file.size === 0) {
+    return 'Empty files are not allowed'
+  }
+  
+  // Skip files larger than 5GB
+  const maxSize = 5 * 1024 * 1024 * 1024 // 5GB
+  if (file.size > maxSize) {
+    return 'File size exceeds 5GB limit'
+  }
+  
+  // Check for dangerous file types
+  const dangerousExtensions = ['.exe', '.bat', '.cmd', '.com', '.pif', '.scr', '.vbs', '.js']
+  const fileExt = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+  if (dangerousExtensions.includes(fileExt)) {
+    return 'This file type is not allowed for security reasons'
+  }
+  
+  return null // File is valid
 }
 
 export default function UploadPopoverTus({
@@ -43,8 +80,17 @@ export default function UploadPopoverTus({
   const [showUploadOptions, setShowUploadOptions] = useState(false)
   const router = useRouter()
   const supabase = createClient()
-  const activeUploadsRef = useRef<Map<string, tus.Upload>>(new Map())
-  const isCancelledRef = useRef(false)
+  const uploadManagerRef = useRef<ParallelUploadManager>(new ParallelUploadManager(2))
+  const folderProcessorRef = useRef<FolderStructureProcessor>(new FolderStructureProcessor())
+  const currentBatchIdRef = useRef<string | null>(null)
+  const sessionManagerRef = useRef<StorageSessionManager>(new StorageSessionManager())
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      sessionManagerRef.current.stopAutoRefresh()
+    }
+  }, [])
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return
@@ -99,19 +145,147 @@ export default function UploadPopoverTus({
     }
   }
 
-  const uploadFileWithTus = async (
-    item: UploadItem,
-    index: number,
-    total: number,
-    toastId: string
-  ): Promise<boolean> => {
-    return new Promise(async (resolve) => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+  const createTusUploadHandler = async (task: UploadTask, batchId: string, folderId?: string): Promise<tus.Upload | null> => {
+    // Get a fresh, valid session
+    const { valid, session } = await sessionManagerRef.current.validateUploadSession()
 
+    if (!valid || !session) {
+      console.error('Invalid or expired session')
+      uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', 'Authentication required - please sign in again')
+      return null
+    }
+
+    // Generate storage path
+    const lastDotIndex = task.file.name.lastIndexOf('.')
+    const hasExtension = lastDotIndex > 0 && lastDotIndex < task.file.name.length - 1
+    const fileExt = hasExtension ? task.file.name.slice(lastDotIndex + 1) : 'txt'
+    const fileName = crypto.randomUUID()
+    const storagePath = `${session.user.id}/${fileName}.${fileExt}`
+
+    // Get project ID from Supabase URL
+    const projectId = process.env.NEXT_PUBLIC_SUPABASE_URL?.split('//')[1]?.split('.')[0]
+
+    const upload = new tus.Upload(task.file, {
+      endpoint: `https://${projectId}.supabase.co/storage/v1/upload/resumable`,
+      retryDelays: [2000, 5000, 10000, 20000, 30000], // Increased delays
+      headers: {
+        authorization: `Bearer ${session.access_token}`,
+        'x-upsert': 'true',
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      metadata: {
+        bucketName: 'user-files',
+        objectName: storagePath,
+        contentType: task.file.type || 'application/octet-stream',
+        cacheControl: '3600',
+      },
+      chunkSize: 6 * 1024 * 1024,
+      parallelUploads: 1, // Disable parallel chunk uploads
+      addRequestId: true, // Add request ID for debugging
+      // Commented out debugging callbacks that were causing errors
+      // onBeforeRequest and onAfterResponse removed due to API incompatibility
+      onError: function (error) {
+        const errorMessage = error?.message || 'Unknown upload error'
+        console.error(`[TUS Upload Error] ${task.file.name}:`, {
+          message: errorMessage,
+          fileName: task.file.name,
+          fileSize: task.file.size,
+          fileType: task.file.type,
+          originalResponse: error?.originalResponse ? {
+            status: error.originalResponse.getStatus ? error.originalResponse.getStatus() : 'Unknown',
+            body: error.originalResponse.getBody ? error.originalResponse.getBody() : 'No body'
+          } : null,
+          fullError: error
+        })
+        
+        // Check for specific error types
+        if (errorMessage.includes('unexpected response') || errorMessage.includes('429')) {
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', 'Server overloaded - will retry')
+        } else if (errorMessage.includes('401') || errorMessage.includes('403')) {
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', 'Authentication failed - please refresh and try again')
+        } else if (errorMessage.includes('413') || errorMessage.includes('payload too large')) {
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', 'File too large')
+        } else {
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', errorMessage)
+        }
+      },
+      onProgress: function (bytesUploaded, bytesTotal) {
+        uploadManagerRef.current.updateTaskProgress(batchId, task.id, bytesUploaded, bytesTotal)
+      },
+      onSuccess: async function () {
+        console.log(`Upload finished for ${task.file.name}`)
+        
+        try {
+          // Use pre-created folder ID or task's parent ID
+          const finalParentId = folderId || task.parentId || parentId
+
+          // Create file record
+          const { error } = await supabase
+            .from('nodes')
+            .insert({
+              user_id: session.user.id,
+              workspace_id: workspaceId,
+              parent_id: finalParentId,
+              node_type: 'file',
+              name: task.file.name,
+              mime_type: task.file.type,
+              size: task.file.size,
+              storage_object_path: storagePath
+            })
+
+          if (error) throw error
+
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'complete')
+        } catch (error) {
+          console.error('Failed to create database record:', error)
+          uploadManagerRef.current.updateTaskStatus(batchId, task.id, 'error', 'Failed to save file record')
+        }
+      }
+    })
+
+    // Start the upload
+    upload.start()
+    return upload
+  }
+
+  const processUploadBatch = async (items: UploadItem[], toastId: string): Promise<{ successCount: number; totalCount: number; skippedCount: number }> => {
+    try {
+      // Filter out invalid files
+      const validItems: UploadItem[] = []
+      const skippedFiles: string[] = []
+      
+      items.forEach(item => {
+        const validationError = validateFile(item.file)
+        if (validationError) {
+          console.log(`[File Skipped] ${item.file.name}: ${validationError}`)
+          skippedFiles.push(item.file.name)
+        } else {
+          validItems.push(item)
+        }
+      })
+      
+      if (skippedFiles.length > 0) {
+        console.log(`[Upload Batch] Skipped ${skippedFiles.length} invalid files:`, skippedFiles)
+      }
+      
+      if (validItems.length === 0) {
+        toast(
+          <SimpleToast 
+            message="No valid files to upload"
+            type="info"
+          />,
+          { duration: 4000 }
+        )
+        return { successCount: 0, totalCount: items.length, skippedCount: skippedFiles.length }
+      }
+      
+      // Start auto-refresh for session during uploads
+      sessionManagerRef.current.startAutoRefresh()
+      
+      // Get session first
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        console.error('No session found')
         toast(
           <SimpleToast 
             message="Authentication required"
@@ -119,149 +293,87 @@ export default function UploadPopoverTus({
           />,
           { duration: 4000 }
         )
-        resolve(false)
-        return
+        return { successCount: 0, totalCount: items.length, skippedCount: skippedFiles.length }
       }
 
-      // Generate storage path
-      const fileExt = item.file.name.split('.').pop()
-      const fileName = crypto.randomUUID()
-      const storagePath = `${session.user.id}/${fileName}.${fileExt}`
-
-      // Get project ID from Supabase URL
-      const projectId = process.env.NEXT_PUBLIC_SUPABASE_URL?.split('//')[1]?.split('.')[0]
+      // Extract folder paths and create folder structure first
+      const folderPaths = folderProcessorRef.current.extractFolderPaths(validItems)
+      let folderMap = new Map<string, string>()
       
-      const upload = new tus.Upload(item.file, {
-        endpoint: `https://${projectId}.supabase.co/storage/v1/upload/resumable`,
-        retryDelays: [0, 3000, 5000, 10000, 20000],
-        headers: {
-          authorization: `Bearer ${session.access_token}`,
-          'x-upsert': 'true',
-        },
-        uploadDataDuringCreation: true,
-        removeFingerprintOnSuccess: true,
-        metadata: {
-          bucketName: 'user-files',
-          objectName: storagePath,
-          contentType: item.file.type || 'application/octet-stream',
-          cacheControl: '3600',
-        },
-        chunkSize: 6 * 1024 * 1024, // 6MB chunks
-        onError: function (error) {
-          console.error('TUS upload error:', error)
-          activeUploadsRef.current.delete(storagePath)
-          resolve(false)
-        },
-        onProgress: function (bytesUploaded, bytesTotal) {
-          const percentage = (bytesUploaded / bytesTotal * 100)
-          const overallProgress = ((index + (percentage / 100)) / total) * 100
-          
-          // Update toast progress
+      if (folderPaths.length > 0) {
+        toast(
+          <ProgressToast 
+            message="Creating folder structure..."
+            progress={0}
+            onCancel={() => handleCancelUpload(toastId)}
+          />,
+          { id: toastId, duration: Infinity }
+        )
+
+        folderMap = await folderProcessorRef.current.createFolderStructure(
+          workspaceId,
+          parentId,
+          folderPaths,
+          session.user.id
+        )
+      }
+
+      // Prepare tasks with pre-created folder IDs
+      const tasks = validItems.map(item => {
+        let folderId: string | undefined
+        if (item.path && item.path.length > 0) {
+          const folderPath = item.path.join('/')
+          folderId = folderMap.get(folderPath)
+        }
+        
+        return {
+          file: item.file,
+          path: item.path,
+          parentId: folderId || parentId
+        }
+      })
+
+      // Create upload batch
+      const batchId = uploadManagerRef.current.createBatch(tasks, {
+        concurrencyLimit: 2,
+        onProgress: (progress, uploadedBytes, totalBytes) => {
+          const message = skippedFiles.length > 0 
+            ? `Uploading ${validItems.length} files (${skippedFiles.length} skipped)...`
+            : `Uploading ${validItems.length} files...`
           toast(
             <ProgressToast 
-              message={total > 1 ? 'Uploading files...' : `Uploading ${item.file.name}...`}
-              progress={overallProgress}
+              message={message}
+              progress={progress}
               onCancel={() => handleCancelUpload(toastId)}
             />,
             { id: toastId, duration: Infinity }
           )
-        },
-        onSuccess: async function () {
-          console.log(`Upload finished for ${item.file.name}`)
-          
-          // Create database record for the file
-          try {
-            // If path is provided, create folder structure first
-            let currentParentId = parentId
-            
-            if (item.path && item.path.length > 0) {
-              for (const folderName of item.path) {
-                // Check if folder exists
-                let query = supabase
-                  .from('nodes')
-                  .select('id')
-                  .eq('workspace_id', workspaceId)
-                  .eq('name', folderName)
-                  .eq('node_type', 'folder')
-                
-                if (currentParentId === null) {
-                  query = query.is('parent_id', null)
-                } else {
-                  query = query.eq('parent_id', currentParentId)
-                }
-                
-                const { data: existingFolder } = await query.single()
-
-                if (existingFolder) {
-                  currentParentId = existingFolder.id
-                } else {
-                  // Create folder
-                  const { data: newFolder, error } = await supabase
-                    .from('nodes')
-                    .insert({
-                      user_id: session.user.id,
-                      workspace_id: workspaceId,
-                      parent_id: currentParentId,
-                      node_type: 'folder',
-                      name: folderName
-                    })
-                    .select()
-                    .single()
-
-                  if (error) throw error
-                  currentParentId = newFolder.id
-                }
-              }
-            }
-
-            // Create file record
-            const { error } = await supabase
-              .from('nodes')
-              .insert({
-                user_id: session.user.id,
-                workspace_id: workspaceId,
-                parent_id: currentParentId,
-                node_type: 'file',
-                name: item.file.name,
-                mime_type: item.file.type,
-                size: item.file.size,
-                storage_object_path: storagePath
-              })
-
-            if (error) throw error
-            
-            activeUploadsRef.current.delete(storagePath)
-            resolve(true)
-          } catch (error) {
-            console.error('Failed to create database record:', error)
-            resolve(false)
-          }
         }
       })
 
-      // Store the upload instance
-      activeUploadsRef.current.set(storagePath, upload)
+      // Store current batch ID for cancellation
+      currentBatchIdRef.current = batchId
 
-      // Check if cancelled before starting
-      if (isCancelledRef.current) {
-        console.log('Upload cancelled before start, aborting')
-        upload.abort()
-        activeUploadsRef.current.delete(storagePath)
-        resolve(false)
-        return
-      }
+      // Process uploads in parallel
+      const result = await uploadManagerRef.current.processBatch(batchId, async (task) => {
+        const taskFolderId = task.parentId !== parentId ? task.parentId : undefined
+        return await createTusUploadHandler(task, batchId, taskFolderId as string | undefined)
+      })
 
-      // Start the upload
-      upload.start()
-    })
+      return { ...result, skippedCount: skippedFiles.length }
+
+    } catch (error) {
+      console.error('Upload batch error:', error)
+      return { successCount: 0, totalCount: items.length, skippedCount: skippedFiles.length }
+    } finally {
+      // Stop auto-refresh when uploads complete
+      sessionManagerRef.current.stopAutoRefresh()
+    }
   }
 
   const handleUploadFiles = () => {
     // Close popover immediately
     onOpenChange?.(false)
-    
-    // Reset cancelled state
-    isCancelledRef.current = false
     
     // Create and trigger file input
     const input = document.createElement('input')
@@ -273,45 +385,40 @@ export default function UploadPopoverTus({
       if (files.length === 0) return
       
       const toastId = `upload-${Date.now()}`
-      let successCount = 0
+      const items = files.map(file => ({ file }))
       
-      // Show initial progress
-      toast(
-        <ProgressToast 
-          message={files.length > 1 ? `Uploading ${files.length} files...` : `Uploading ${files[0].name}...`}
-          progress={0}
-          onCancel={() => handleCancelUpload(toastId)}
-        />,
-        { id: toastId, duration: Infinity }
-      )
-      
-      // Upload files sequentially
-      for (let i = 0; i < files.length; i++) {
-        if (isCancelledRef.current) break
-        
-        const success = await uploadFileWithTus(
-          { file: files[i] },
-          i,
-          files.length,
-          toastId
-        )
-        if (success) successCount++
-      }
+      // Process uploads in parallel
+      const { successCount, totalCount, skippedCount } = await processUploadBatch(items, toastId)
       
       // Show final result
-      if (successCount === files.length) {
+      const validCount = totalCount - skippedCount
+      if (successCount === validCount && validCount > 0) {
+        const message = skippedCount > 0
+          ? `Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}! (${skippedCount} skipped)`
+          : `Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`
         toast(
           <SimpleToast 
-            message={`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}!`}
+            message={message}
             type="success"
           />,
           { id: toastId, duration: 4000 }
         )
       } else if (successCount > 0) {
+        const message = skippedCount > 0
+          ? `Uploaded ${successCount} of ${validCount} files (${skippedCount} skipped)`
+          : `Uploaded ${successCount} of ${totalCount} files`
         toast(
           <SimpleToast 
-            message={`Uploaded ${successCount} of ${files.length} files`}
+            message={message}
             type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
+      } else if (skippedCount === totalCount) {
+        toast(
+          <SimpleToast 
+            message="All files were skipped (hidden/system files)"
+            type="info"
           />,
           { id: toastId, duration: 4000 }
         )
@@ -337,9 +444,6 @@ export default function UploadPopoverTus({
     // Close popover immediately
     onOpenChange?.(false)
     
-    // Reset cancelled state
-    isCancelledRef.current = false
-    
     // Create and trigger file input for directories
     const input = document.createElement('input')
     input.type = 'file'
@@ -351,51 +455,51 @@ export default function UploadPopoverTus({
       if (files.length === 0) return
       
       const toastId = `upload-${Date.now()}`
-      let successCount = 0
-      
-      // Show initial progress
-      toast(
-        <ProgressToast 
-          message={`Uploading folder with ${files.length} files...`}
-          progress={0}
-          onCancel={() => handleCancelUpload(toastId)}
-        />,
-        { id: toastId, duration: Infinity }
-      )
       
       // Process files with folder structure
-      for (let i = 0; i < files.length; i++) {
-        if (isCancelledRef.current) break
-        
-        const file = files[i]
+      const items = files.map(file => {
         const pathParts = (file as any).webkitRelativePath?.split('/') || []
         if (pathParts.length > 1) {
           pathParts.pop() // Remove filename
         }
-        
-        const success = await uploadFileWithTus(
-          { file, path: pathParts.length > 0 ? pathParts : undefined },
-          i,
-          files.length,
-          toastId
-        )
-        if (success) successCount++
-      }
+        return {
+          file,
+          path: pathParts.length > 0 ? pathParts : undefined
+        }
+      })
+      
+      // Process uploads in parallel
+      const { successCount, totalCount, skippedCount } = await processUploadBatch(items, toastId)
       
       // Show final result
-      if (successCount === files.length) {
+      const validCount = totalCount - skippedCount
+      if (successCount === validCount && validCount > 0) {
+        const message = skippedCount > 0
+          ? `Successfully uploaded folder with ${successCount} file${successCount > 1 ? 's' : ''}! (${skippedCount} skipped)`
+          : `Successfully uploaded folder with ${successCount} file${successCount > 1 ? 's' : ''}!`
         toast(
           <SimpleToast 
-            message={`Successfully uploaded folder with ${successCount} file${successCount > 1 ? 's' : ''}!`}
+            message={message}
             type="success"
           />,
           { id: toastId, duration: 4000 }
         )
       } else if (successCount > 0) {
+        const message = skippedCount > 0
+          ? `Uploaded ${successCount} of ${validCount} files from folder (${skippedCount} skipped)`
+          : `Uploaded ${successCount} of ${totalCount} files from folder`
         toast(
           <SimpleToast 
-            message={`Uploaded ${successCount} of ${files.length} files from folder`}
+            message={message}
             type="warning"
+          />,
+          { id: toastId, duration: 4000 }
+        )
+      } else if (skippedCount === totalCount) {
+        toast(
+          <SimpleToast 
+            message="All files in folder were skipped (hidden/system files)"
+            type="info"
           />,
           { id: toastId, duration: 4000 }
         )
@@ -420,21 +524,10 @@ export default function UploadPopoverTus({
   const handleCancelUpload = (toastId: string) => {
     console.log('Cancelling upload:', toastId)
     
-    // Set cancelled flag
-    isCancelledRef.current = true
-    
-    // Abort all active uploads
-    activeUploadsRef.current.forEach((upload, key) => {
-      console.log('Aborting upload:', key)
-      try {
-        upload.abort()
-      } catch (e) {
-        console.error('Error aborting upload:', e)
-      }
-    })
-    
-    // Clear active uploads
-    activeUploadsRef.current.clear()
+    // Cancel current batch if exists
+    if (currentBatchIdRef.current) {
+      uploadManagerRef.current.cancelBatch(currentBatchIdRef.current)
+    }
     
     // Update UI
     toast.dismiss(toastId)

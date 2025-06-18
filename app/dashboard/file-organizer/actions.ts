@@ -198,7 +198,9 @@ export async function uploadFile(
 
   // Generate unique storage path
   const fileId = crypto.randomUUID()
-  const fileExt = file.name.split('.').pop()
+  const lastDotIndex = file.name.lastIndexOf('.')
+  const hasExtension = lastDotIndex > 0 && lastDotIndex < file.name.length - 1
+  const fileExt = hasExtension ? file.name.slice(lastDotIndex + 1) : 'txt'
   const storagePath = `${user.id}/${fileId}.${fileExt}`
 
   // Upload to Supabase Storage
@@ -277,11 +279,30 @@ export async function deleteNode(nodeId: string) {
 
   if (!node) throw new Error('Node not found')
 
-  // If it's a file, delete from storage
+  // Collect all storage paths to delete
+  const storagePaths: string[] = []
+
+  // If it's a file, add its storage path
   if (node.node_type === 'file' && node.storage_object_path) {
-    await supabase.storage
+    storagePaths.push(node.storage_object_path)
+  }
+  
+  // If it's a folder, get all descendant files
+  if (node.node_type === 'folder') {
+    const descendantFiles = await getAllDescendantFiles(supabase, nodeId, user.id)
+    storagePaths.push(...descendantFiles)
+  }
+
+  // Delete all files from storage
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage
       .from('user-files')
-      .remove([node.storage_object_path])
+      .remove(storagePaths)
+    
+    if (storageError) {
+      console.error('Error deleting files from storage:', storageError)
+      // Continue with database deletion even if storage deletion fails
+    }
   }
 
   // Delete from database (cascade will handle children)
@@ -311,16 +332,32 @@ export async function deleteNodes(nodeIds: string[]) {
 
   if (!nodes || nodes.length === 0) throw new Error('No nodes found')
 
-  // Collect storage paths for files
-  const storagePaths = nodes
-    .filter(node => node.node_type === 'file' && node.storage_object_path)
-    .map(node => node.storage_object_path!)
+  // Collect all storage paths to delete
+  const storagePaths: string[] = []
+  
+  for (const node of nodes) {
+    // Add file storage paths
+    if (node.node_type === 'file' && node.storage_object_path) {
+      storagePaths.push(node.storage_object_path)
+    }
+    
+    // For folders, get all descendant files
+    if (node.node_type === 'folder') {
+      const descendantFiles = await getAllDescendantFiles(supabase, node.id, user.id)
+      storagePaths.push(...descendantFiles)
+    }
+  }
 
-  // Delete files from storage if any
+  // Delete all files from storage if any
   if (storagePaths.length > 0) {
-    await supabase.storage
+    const { error: storageError } = await supabase.storage
       .from('user-files')
       .remove(storagePaths)
+    
+    if (storageError) {
+      console.error('Error deleting files from storage:', storageError)
+      // Continue with database deletion even if storage deletion fails
+    }
   }
 
   // Delete all nodes from database (cascade will handle children)
@@ -568,6 +605,34 @@ async function getAllDescendants(
   }
 
   return descendants
+}
+
+// Recursively get all descendant file storage paths
+async function getAllDescendantFiles(
+  supabase: any,
+  nodeId: string,
+  userId: string
+): Promise<string[]> {
+  const filePaths: string[] = []
+  
+  const { data: children } = await supabase
+    .from('nodes')
+    .select('id, node_type, storage_object_path')
+    .eq('parent_id', nodeId)
+    .eq('user_id', userId)
+
+  if (children) {
+    for (const child of children) {
+      if (child.node_type === 'file' && child.storage_object_path) {
+        filePaths.push(child.storage_object_path)
+      } else if (child.node_type === 'folder') {
+        const childFiles = await getAllDescendantFiles(supabase, child.id, userId)
+        filePaths.push(...childFiles)
+      }
+    }
+  }
+
+  return filePaths
 }
 
 export async function deleteWorkspace(workspaceId: string) {
