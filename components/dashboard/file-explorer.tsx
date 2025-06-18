@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -28,10 +28,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tables } from '@/utils/supabase/database.types'
-import { createFolder, deleteNode } from '@/app/dashboard/file-organizer/actions'
+import { createFolder, deleteNode, moveNode } from '@/app/dashboard/file-organizer/actions'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import WorkspaceSettings from './workspace-settings'
+import { toast } from 'sonner'
 
 type Node = Tables<'nodes'>
 
@@ -134,19 +135,97 @@ function TreeItem({
   level = 0,
   workspaceId,
   onNodeSelect,
-  onRefresh
+  onRefresh,
+  draggedNode,
+  onDragStart,
+  onDragEnd,
+  onDrop
 }: { 
   node: TreeNode
   level?: number
   workspaceId: string
   onNodeSelect?: (node: Node) => void
   onRefresh: () => void
+  draggedNode: Node | null
+  onDragStart: (node: Node) => void
+  onDragEnd: () => void
+  onDrop: (targetNode: Node) => void
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [expandTimer, setExpandTimer] = useState<NodeJS.Timeout | null>(null)
   const router = useRouter()
   const supabase = createClient()
+
+  // Check if this node can accept the dragged node
+  const canAcceptDrop = useCallback(() => {
+    if (!draggedNode) return false
+    if (node.node_type !== 'folder') return false
+    if (draggedNode.id === node.id) return false
+    if (draggedNode.workspace_id !== node.workspace_id) return false
+    // Additional validation will be done server-side
+    return true
+  }, [draggedNode, node])
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      nodeId: node.id,
+      nodeType: node.node_type,
+      workspaceId: node.workspace_id,
+      parentId: node.parent_id
+    }))
+    onDragStart(node)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    if (canAcceptDrop()) {
+      e.dataTransfer.dropEffect = 'move'
+      setIsDragOver(true)
+      
+      // Auto-expand folders after hovering for 500ms
+      if (node.node_type === 'folder' && !isExpanded && !expandTimer) {
+        const timer = setTimeout(() => {
+          setIsExpanded(true)
+          setExpandTimer(null)
+        }, 500)
+        setExpandTimer(timer)
+      }
+    } else {
+      e.dataTransfer.dropEffect = 'none'
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    
+    if (expandTimer) {
+      clearTimeout(expandTimer)
+      setExpandTimer(null)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    
+    if (expandTimer) {
+      clearTimeout(expandTimer)
+      setExpandTimer(null)
+    }
+    
+    if (canAcceptDrop()) {
+      onDrop(node)
+    }
+  }
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return
@@ -194,14 +273,26 @@ function TreeItem({
     }
   }
 
+  const isDragging = draggedNode?.id === node.id
+  const isValidDropTarget = node.node_type === 'folder' && canAcceptDrop()
+
   return (
     <div>
       <ContextMenu>
         <ContextMenuTrigger>
           <div
+            draggable
+            onDragStart={handleDragStart}
+            onDragEnd={onDragEnd}
+            onDragOver={node.node_type === 'folder' ? handleDragOver : undefined}
+            onDragLeave={node.node_type === 'folder' ? handleDragLeave : undefined}
+            onDrop={node.node_type === 'folder' ? handleDrop : undefined}
             className={cn(
               "flex items-center gap-2 px-2 py-1 rounded hover:bg-accent cursor-pointer group",
-              "select-none"
+              "select-none transition-all",
+              isDragging && "opacity-50",
+              isDragOver && isValidDropTarget && "ring-2 ring-blue-500 bg-blue-50/50",
+              isDragOver && !isValidDropTarget && "ring-2 ring-red-500 cursor-not-allowed"
             )}
             style={{ paddingLeft: `${level * 16 + 8}px` }}
             onClick={() => {
@@ -298,6 +389,10 @@ function TreeItem({
               workspaceId={workspaceId}
               onNodeSelect={onNodeSelect}
               onRefresh={onRefresh}
+              draggedNode={draggedNode}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDrop={onDrop}
             />
           ))}
         </div>
@@ -311,6 +406,9 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
   const tree = buildTree(nodes)
   const [isCreatingRootFolder, setIsCreatingRootFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [draggedNode, setDraggedNode] = useState<Node | null>(null)
+  const [isDraggingOverRoot, setIsDraggingOverRoot] = useState(false)
+  const [isMoving, setIsMoving] = useState(false)
 
   const handleCreateRootFolder = async () => {
     if (!newFolderName.trim()) return
@@ -327,6 +425,70 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
 
   const handleRefresh = () => {
     router.refresh()
+  }
+
+  const handleDragStart = (node: Node) => {
+    setDraggedNode(node)
+  }
+
+  const handleDragEnd = () => {
+    setDraggedNode(null)
+    setIsDraggingOverRoot(false)
+  }
+
+  const handleDrop = async (targetNode: Node | null) => {
+    if (!draggedNode || isMoving) return
+    
+    // Don't move if dropping on same parent
+    if (draggedNode.parent_id === targetNode?.id || 
+        (draggedNode.parent_id === null && targetNode === null)) {
+      return
+    }
+
+    setIsMoving(true)
+    try {
+      const result = await moveNode(draggedNode.id, targetNode?.id || null)
+      
+      if (result.newName !== draggedNode.name) {
+        toast.success(`Moved "${draggedNode.name}" and renamed to "${result.newName}" to avoid conflicts.`)
+      } else {
+        toast.success(`Moved "${draggedNode.name}" successfully.`)
+      }
+      
+      router.refresh()
+    } catch (error) {
+      console.error('Failed to move node:', error)
+      toast.error(error instanceof Error ? error.message : "Failed to move item")
+    } finally {
+      setIsMoving(false)
+      setDraggedNode(null)
+    }
+  }
+
+  const handleRootDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    if (draggedNode && draggedNode.parent_id !== null) {
+      e.dataTransfer.dropEffect = 'move'
+      setIsDraggingOverRoot(true)
+    }
+  }
+
+  const handleRootDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingOverRoot(false)
+  }
+
+  const handleRootDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingOverRoot(false)
+    
+    if (draggedNode && draggedNode.parent_id !== null) {
+      handleDrop(null)
+    }
   }
 
   return (
@@ -368,17 +530,42 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
             No files yet. Upload files or create folders to get started.
           </p>
         ) : (
-          <div className="space-y-0.5">
-            {tree.map((node) => (
-              <TreeItem
-                key={node.id}
-                node={node}
-                workspaceId={workspaceId}
-                onNodeSelect={onNodeSelect}
-                onRefresh={handleRefresh}
-              />
-            ))}
-          </div>
+          <>
+            <div className="space-y-0.5">
+              {tree.map((node) => (
+                <TreeItem
+                  key={node.id}
+                  node={node}
+                  workspaceId={workspaceId}
+                  onNodeSelect={onNodeSelect}
+                  onRefresh={handleRefresh}
+                  draggedNode={draggedNode}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDrop={handleDrop}
+                />
+              ))}
+            </div>
+            
+            {/* Root drop zone */}
+            {draggedNode && draggedNode.parent_id !== null && (
+              <div
+                onDragOver={handleRootDragOver}
+                onDragLeave={handleRootDragLeave}
+                onDrop={handleRootDrop}
+                className={cn(
+                  "mt-2 p-4 border-2 border-dashed rounded-lg transition-all",
+                  isDraggingOverRoot
+                    ? "border-blue-500 bg-blue-50/50"
+                    : "border-gray-300"
+                )}
+              >
+                <p className="text-sm text-muted-foreground text-center">
+                  Drop here to move to root
+                </p>
+              </div>
+            )}
+          </>
         )}
       </div>
       

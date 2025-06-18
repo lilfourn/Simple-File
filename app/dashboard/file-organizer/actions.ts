@@ -297,6 +297,145 @@ export async function deleteNode(nodeId: string) {
   revalidatePath('/dashboard/file-organizer')
 }
 
+export async function moveNode(nodeId: string, newParentId: string | null) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  // Get the node to be moved
+  const { data: node, error: nodeError } = await supabase
+    .from('nodes')
+    .select('*')
+    .eq('id', nodeId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (nodeError || !node) throw new Error('Node not found')
+
+  // If moving to a folder (not root), validate the target
+  if (newParentId) {
+    // Get target folder
+    const { data: targetFolder, error: targetError } = await supabase
+      .from('nodes')
+      .select('*')
+      .eq('id', newParentId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (targetError || !targetFolder) throw new Error('Target folder not found')
+    
+    // Ensure target is a folder
+    if (targetFolder.node_type !== 'folder') {
+      throw new Error('Can only move items into folders')
+    }
+
+    // Ensure same workspace
+    if (targetFolder.workspace_id !== node.workspace_id) {
+      throw new Error('Cannot move items between workspaces')
+    }
+
+    // Prevent circular reference - check if target is a descendant of the node
+    if (node.node_type === 'folder') {
+      const isCircular = await checkCircularReference(supabase, nodeId, newParentId, user.id)
+      if (isCircular) {
+        throw new Error('Cannot move a folder into itself or its descendants')
+      }
+    }
+  }
+
+  // Check for duplicate names in the target location
+  let finalName = node.name
+  let query = supabase
+    .from('nodes')
+    .select('name')
+    .eq('workspace_id', node.workspace_id)
+    .eq('user_id', user.id)
+    .eq('node_type', node.node_type)
+  
+  // Handle NULL parent_id properly
+  if (newParentId === null) {
+    query = query.is('parent_id', null)
+  } else {
+    query = query.eq('parent_id', newParentId)
+  }
+  
+  const { data: existingNodes } = await query
+
+  if (existingNodes) {
+    const existingNames = new Set(existingNodes.map(n => n.name))
+    if (existingNames.has(node.name)) {
+      // Generate unique name
+      let counter = 1
+      const baseName = node.name.replace(/ \(\d+\)$/, '') // Remove existing (n) suffix
+      while (existingNames.has(finalName)) {
+        finalName = `${baseName} (${counter})`
+        counter++
+      }
+    }
+  }
+
+  // Perform the move
+  const { error: updateError } = await supabase
+    .from('nodes')
+    .update({ 
+      parent_id: newParentId,
+      name: finalName,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', nodeId)
+    .eq('user_id', user.id)
+
+  if (updateError) throw updateError
+
+  revalidatePath('/dashboard/file-organizer')
+  return { success: true, newName: finalName }
+}
+
+// Helper function to check for circular references
+async function checkCircularReference(
+  supabase: any,
+  nodeId: string,
+  targetId: string,
+  userId: string
+): Promise<boolean> {
+  // If trying to move to itself
+  if (nodeId === targetId) return true
+
+  // Get all descendants of the node being moved
+  const descendants = await getAllDescendants(supabase, nodeId, userId)
+  
+  // Check if target is in the descendants
+  return descendants.has(targetId)
+}
+
+// Recursively get all descendant IDs
+async function getAllDescendants(
+  supabase: any,
+  nodeId: string,
+  userId: string
+): Promise<Set<string>> {
+  const descendants = new Set<string>()
+  
+  const { data: children } = await supabase
+    .from('nodes')
+    .select('id, node_type')
+    .eq('parent_id', nodeId)
+    .eq('user_id', userId)
+
+  if (children) {
+    for (const child of children) {
+      descendants.add(child.id)
+      if (child.node_type === 'folder') {
+        const childDescendants = await getAllDescendants(supabase, child.id, userId)
+        childDescendants.forEach(id => descendants.add(id))
+      }
+    }
+  }
+
+  return descendants
+}
+
 export async function deleteWorkspace(workspaceId: string) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
