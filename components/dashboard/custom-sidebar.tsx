@@ -90,7 +90,14 @@ export default function CustomSidebar() {
   }, [])
 
   const isActive = (href: string) => {
-    return pathname === href || pathname.startsWith(href + '/')
+    // Exact match
+    if (pathname === href) return true
+    
+    // For /dashboard, only match exact (not sub-routes)
+    if (href === '/dashboard') return false
+    
+    // For other routes, check if it's a sub-route
+    return pathname.startsWith(href + '/')
   }
 
   const renderNavItem = (item: NavItem) => {
@@ -103,7 +110,7 @@ export default function CustomSidebar() {
             href={item.href}
             className={cn(
               "flex items-center justify-center rounded-lg p-3 transition-all hover:bg-accent",
-              active && "bg-accent text-accent-foreground"
+              active && "bg-primary/10"
             )}
           >
             {item.icon}
