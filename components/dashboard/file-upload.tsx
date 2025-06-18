@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Upload, FolderUp, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { uploadFile } from '@/app/dashboard/file-organizer/actions'
 
 interface FileUploadProps {
   workspaceId: string
@@ -136,7 +135,23 @@ export default function FileUpload({ workspaceId, parentId, onUploadComplete }: 
       ))
 
       try {
-        await uploadFile(workspaceId, parentId, item.file, item.path)
+        const formData = new FormData()
+        formData.append('file', item.file)
+        formData.append('workspaceId', workspaceId)
+        formData.append('parentId', parentId || 'null')
+        if (item.path) {
+          formData.append('path', JSON.stringify(item.path))
+        }
+        
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        })
+        
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Upload failed')
+        }
         
         // Update status to complete
         setUploadQueue(prev => prev.map((q, idx) => 

@@ -69,3 +69,6 @@ npm run lint       # Run ESLint
 
 ### Code Best Practices
 - ALWAYS right best practice typescript, react, tailwindcss code that is also secure
+
+### Interaction Guidelines
+- Never start the server for us, if you want to restart the server just let me know and I will do it manually

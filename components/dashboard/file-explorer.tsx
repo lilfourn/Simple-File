@@ -33,6 +33,7 @@ import { createFolder, deleteNode, deleteNodes, moveNode, moveNodes } from '@/ap
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import WorkspaceSettings from './workspace-settings'
+import UploadPopover from './upload-popover'
 import { toast } from 'sonner'
 
 type Node = Tables<'nodes'>
@@ -142,7 +143,8 @@ function TreeItem({
   onDragEnd,
   onDrop,
   selectedNodes,
-  onNodeClick
+  onNodeClick,
+  onDeleteSelected
 }: { 
   node: TreeNode
   level?: number
@@ -155,10 +157,9 @@ function TreeItem({
   onDrop: (targetNode: Node) => void
   selectedNodes: Set<string>
   onNodeClick: (node: Node, e: React.MouseEvent) => void
+  onDeleteSelected: () => void
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
   const [expandTimer, setExpandTimer] = useState<NodeJS.Timeout | null>(null)
   const router = useRouter()
@@ -260,27 +261,6 @@ function TreeItem({
     }
   }
 
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return
-
-    try {
-      const result = await createFolder(workspaceId, node.id, newFolderName.trim())
-      
-      if (result.wasRenamed) {
-        toast.info(`Folder created as "${result.name}" to avoid naming conflict`)
-      } else {
-        toast.success(`Folder "${result.name}" created successfully`)
-      }
-      
-      setNewFolderName('')
-      setIsCreatingFolder(false)
-      setIsExpanded(true)
-      onRefresh()
-    } catch (error) {
-      console.error('Failed to create folder:', error)
-      toast.error('Failed to create folder')
-    }
-  }
 
   const handleDelete = async () => {
     if (!confirm(`Are you sure you want to delete "${node.name}"?`)) return
@@ -380,14 +360,14 @@ function TreeItem({
         </ContextMenuTrigger>
         
         <ContextMenuContent>
-          {selectedCount > 1 ? (
+          {selectedCount > 1 && isSelected ? (
             // Multi-select context menu
             <>
               <ContextMenuItem disabled className="font-medium">
                 {selectedCount} items selected
               </ContextMenuItem>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onRefresh()} className="text-destructive">
+              <ContextMenuItem onClick={onDeleteSelected} className="text-destructive">
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete {selectedCount} items
               </ContextMenuItem>
@@ -397,10 +377,16 @@ function TreeItem({
             <>
               {node.node_type === 'folder' && (
                 <>
-                  <ContextMenuItem onClick={() => setIsCreatingFolder(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    New Folder
-                  </ContextMenuItem>
+                  <UploadPopover
+                    workspaceId={workspaceId}
+                    parentId={node.id}
+                    trigger={
+                      <ContextMenuItem onSelect={(e) => e.preventDefault()}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add to Folder
+                      </ContextMenuItem>
+                    }
+                  />
                   <ContextMenuSeparator />
                 </>
               )}
@@ -424,28 +410,6 @@ function TreeItem({
         </ContextMenuContent>
       </ContextMenu>
 
-      {isCreatingFolder && (
-        <div 
-          className="flex items-center gap-2 px-2 py-1 animate-in fade-in slide-in-from-left-2 duration-200" 
-          style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
-        >
-          <Folder className="h-4 w-4 text-blue-600" />
-          <Input
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateFolder()
-              if (e.key === 'Escape') {
-                setIsCreatingFolder(false)
-                setNewFolderName('')
-              }
-            }}
-            placeholder="Folder name"
-            className="h-6 text-sm"
-            autoFocus
-          />
-        </div>
-      )}
 
       {isExpanded && node.children.length > 0 && (
         <div className="animate-in fade-in slide-in-from-top-1 duration-200">
@@ -470,6 +434,7 @@ function TreeItem({
                 onDrop={onDrop}
                 selectedNodes={selectedNodes}
                 onNodeClick={onNodeClick}
+                onDeleteSelected={onDeleteSelected}
               />
             </div>
           ))}
@@ -482,8 +447,6 @@ function TreeItem({
 export default function FileExplorer({ nodes, workspaceId, workspace, workspaces, onNodeSelect }: FileExplorerProps) {
   const router = useRouter()
   const tree = buildTree(nodes)
-  const [isCreatingRootFolder, setIsCreatingRootFolder] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
   const [draggedNode, setDraggedNode] = useState<Node | null>(null)
   const [isDraggingOverRoot, setIsDraggingOverRoot] = useState(false)
   const [isMoving, setIsMoving] = useState(false)
@@ -493,27 +456,6 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
   const [lastSelectedNode, setLastSelectedNode] = useState<string | null>(null)
   const [isCtrlPressed, setIsCtrlPressed] = useState(false)
   const [isShiftPressed, setIsShiftPressed] = useState(false)
-
-  const handleCreateRootFolder = async () => {
-    if (!newFolderName.trim()) return
-
-    try {
-      const result = await createFolder(workspaceId, null, newFolderName.trim())
-      
-      if (result.wasRenamed) {
-        toast.info(`Folder created as "${result.name}" to avoid naming conflict`)
-      } else {
-        toast.success(`Folder "${result.name}" created successfully`)
-      }
-      
-      setNewFolderName('')
-      setIsCreatingRootFolder(false)
-      router.refresh()
-    } catch (error) {
-      console.error('Failed to create folder:', error)
-      toast.error('Failed to create folder')
-    }
-  }
 
   const handleRefresh = () => {
     router.refresh()
@@ -727,6 +669,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
     }
   }
 
+
   return (
     <div className="flex flex-col h-full w-full">
       <div 
@@ -743,35 +686,21 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
       >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-medium">Files</h3>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setIsCreatingRootFolder(true)}
-            className="transition-all duration-200 hover:scale-110 active:scale-95"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          <UploadPopover
+            workspaceId={workspaceId}
+            parentId={null}
+            trigger={
+              <Button
+                size="sm"
+                variant="ghost"
+                className="transition-all duration-200 hover:scale-110 active:scale-95"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            }
+          />
         </div>
 
-        {isCreatingRootFolder && (
-          <div className="flex items-center gap-2 px-2 py-1 mb-2 animate-in fade-in slide-in-from-left-2 duration-200">
-            <Folder className="h-4 w-4 text-blue-600" />
-            <Input
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateRootFolder()
-                if (e.key === 'Escape') {
-                  setIsCreatingRootFolder(false)
-                  setNewFolderName('')
-                }
-              }}
-              placeholder="Folder name"
-              className="h-6 text-sm"
-              autoFocus
-            />
-          </div>
-        )}
 
         {tree.length === 0 ? (
           <p className="text-sm text-muted-foreground px-2">
@@ -793,6 +722,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
                   onDrop={handleDrop}
                   selectedNodes={selectedNodes}
                   onNodeClick={handleNodeClick}
+                  onDeleteSelected={handleDeleteSelected}
                 />
               ))}
             </div>

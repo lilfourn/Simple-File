@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import WorkspaceHeader from '@/components/dashboard/workspace-header'
-import FileUpload from '@/components/dashboard/file-upload'
 import FileExplorer from '@/components/dashboard/file-explorer'
 import { Tables } from '@/utils/supabase/database.types'
 import { Card } from '@/components/ui/card'
@@ -37,9 +36,6 @@ export default function FileOrganizerClient({
     router.push(`/dashboard/file-organizer?workspace=${workspaceId}`)
   }
 
-  const handleUploadComplete = () => {
-    router.refresh()
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -71,20 +67,6 @@ export default function FileOrganizerClient({
               </p>
             </div>
 
-            {/* Upload Area */}
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4">Upload Files</h2>
-              <FileUpload
-                workspaceId={currentWorkspaceId}
-                parentId={selectedNode?.node_type === 'folder' ? selectedNode.id : null}
-                onUploadComplete={handleUploadComplete}
-              />
-              {selectedNode?.node_type === 'folder' && (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Uploading to: <span className="font-medium">{selectedNode.name}</span>
-                </p>
-              )}
-            </Card>
 
             {/* Selected File Info */}
             {selectedNode?.node_type === 'file' && (
