@@ -567,7 +567,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
         
         const results = await moveNodes(nodesToMove, targetNode?.id || null)
         
-        const renamedCount = results.filter(r => r.renamed).length
+        const renamedCount = results?.filter(r => r.renamed).length || 0
         if (renamedCount > 0) {
           toast(
             <SimpleToast 
@@ -800,7 +800,7 @@ export default function FileExplorer({ nodes, workspaceId, workspace, workspaces
         className="flex-1 overflow-y-auto px-3 py-4"
         onClick={(e) => {
           // Clear selection if clicking on empty space
-          if (e.target === e.currentTarget || e.currentTarget.contains(e.target as Node)) {
+          if (e.target === e.currentTarget || e.currentTarget.contains(e.target as HTMLElement)) {
             const isClickOnItem = (e.target as HTMLElement).closest('[data-tree-item]')
             if (!isClickOnItem) {
               setSelectedNodes(new Set())

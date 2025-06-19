@@ -21,7 +21,7 @@ export function ProgressToast({
   return (
     <div className={cn("w-full", className)}>
       <div className="flex items-start justify-between gap-2 mb-2">
-        <p className="text-sm font-medium truncate flex-1">{message}</p>
+        <p className="text-sm font-medium flex-1 break-words">{message}</p>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground whitespace-nowrap">
             {Math.floor(percentage)}%

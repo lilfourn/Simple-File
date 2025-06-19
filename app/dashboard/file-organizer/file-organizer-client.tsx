@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import WorkspaceHeader from '@/components/dashboard/workspace-header'
 import FileExplorer from '@/components/dashboard/file-explorer'
+import SmartSyncEnhanced from '@/components/dashboard/smart-sync-enhanced'
 import { Tables } from '@/utils/supabase/database.types'
 import { Card } from '@/components/ui/card'
 
@@ -58,8 +59,8 @@ export default function FileOrganizerClient({
         </div>
 
         {/* Main Content Area */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-4xl space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+          <div className="h-full flex flex-col space-y-6">
             <div>
               <h1 className="text-2xl font-bold">File Organizer</h1>
               <p className="text-muted-foreground">
@@ -97,33 +98,14 @@ export default function FileOrganizerClient({
               </Card>
             )}
 
-            {/* AI Features Preview */}
-            <Card className="p-6 bg-muted/50">
-              <h2 className="text-lg font-semibold mb-4">AI Features (Coming Soon)</h2>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <div className="flex items-start gap-2">
-                  <div className="h-2 w-2 rounded-full bg-primary mt-1.5" />
-                  <div>
-                    <p className="font-medium text-foreground">Smart Rename</p>
-                    <p>AI will analyze your files and suggest better names based on content</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="h-2 w-2 rounded-full bg-primary mt-1.5" />
-                  <div>
-                    <p className="font-medium text-foreground">Auto-Organize</p>
-                    <p>Automatically sort files into appropriate folders</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="h-2 w-2 rounded-full bg-primary mt-1.5" />
-                  <div>
-                    <p className="font-medium text-foreground">Content Search</p>
-                    <p>Search files by their actual content, not just names</p>
-                  </div>
-                </div>
-              </div>
-            </Card>
+            {/* SmartSync - AI File Intelligence */}
+            <SmartSyncEnhanced 
+              workspaceId={currentWorkspaceId}
+              onFilesRenamed={() => {
+                // Refresh the file explorer
+                router.refresh()
+              }}
+            />
           </div>
         </div>
       </div>

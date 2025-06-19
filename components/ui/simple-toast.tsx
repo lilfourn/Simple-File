@@ -24,7 +24,7 @@ export function SimpleToast({
   return (
     <div className={cn("w-full flex items-center gap-2", className)}>
       {icons[type]}
-      <p className="text-sm font-medium flex-1">{message}</p>
+      <p className="text-sm font-medium flex-1 break-words">{message}</p>
     </div>
   )
 }

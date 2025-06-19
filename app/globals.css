@@ -157,6 +157,15 @@
   }
 }
 
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
 @keyframes dropBounce {
   0% {
     transform: scale(1);
@@ -177,9 +186,15 @@
   animation: fadeIn 0.2s ease-out;
 }
 
+/* SmartSync animations */
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+
 /* Sonner toast customizations */
 [data-sonner-toast] {
   min-width: 300px !important;
+  max-width: 500px !important;
 }
 
 [data-sonner-toast] > div:first-child {
@@ -202,6 +217,12 @@
   white-space: normal !important;
   word-break: normal !important;
   overflow-wrap: break-word !important;
+  hyphens: none !important;
+}
+
+/* Prevent text from being cut off */
+[data-sonner-toast] .text-sm {
+  line-height: 1.5 !important;
 }
 
 .folder-children {
@@ -238,4 +259,58 @@
 
 .drop-indicator-active {
   opacity: 1;
+}
+
+/* Aesthetic gradient backgrounds for SmartSync */
+.gradient-earth-sage {
+  background: linear-gradient(135deg, #5a4d4c 0%, #8a9a8c 100%);
+}
+
+.gradient-ochre-terracotta {
+  background: linear-gradient(135deg, #e8af46 0%, #cc785c 100%);
+}
+
+.gradient-sky-sage {
+  background: linear-gradient(135deg, #61aaf2 0%, #8a9a8c 100%);
+}
+
+.gradient-sunset {
+  background: linear-gradient(135deg, #bf4d43 0%, #e8af46 60%, #cc785c 100%);
+}
+
+.gradient-nature {
+  background: linear-gradient(135deg, #8a9a8c 0%, #61aaf2 50%, #e8af46 100%);
+}
+
+.gradient-warm {
+  background: linear-gradient(135deg, #cc785c 0%, #bf4d43 50%, #e8af46 100%);
+}
+
+/* Responsive gradient card sizing */
+@media (max-width: 768px) {
+  .gradient-card {
+    min-height: 160px;
+    padding: 1.25rem;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .gradient-card {
+    min-height: 180px;
+    padding: 1.5rem;
+  }
+}
+
+@media (min-width: 1025px) {
+  .gradient-card {
+    min-height: 200px;
+    padding: 1.75rem;
+  }
+}
+
+@media (min-width: 1440px) {
+  .gradient-card {
+    min-height: 220px;
+    padding: 2rem;
+  }
 }

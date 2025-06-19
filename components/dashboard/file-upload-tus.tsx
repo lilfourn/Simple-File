@@ -252,7 +252,7 @@ export default function FileUploadTus({ workspaceId, parentId, onUploadComplete 
       addRequestId: true, // Add request ID for debugging
       // Commented out debugging callbacks that were causing errors
       // onBeforeRequest and onAfterResponse removed due to API incompatibility
-      onError: function (error) {
+      onError: function (error: any) {
         const errorMessage = error?.message || 'Unknown upload error'
         console.error(`[TUS Upload Error] ${task.file.name}:`, {
           message: errorMessage,

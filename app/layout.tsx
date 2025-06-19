@@ -33,10 +33,11 @@ export default function RootLayout({
         >
           {children}
           <Toaster 
+            position="bottom-right"
             toastOptions={{
+              className: 'min-w-[300px] max-w-[500px]',
               style: {
                 width: '100%',
-                maxWidth: '600px',
                 whiteSpace: 'normal',
                 wordBreak: 'normal',
                 overflowWrap: 'break-word',
